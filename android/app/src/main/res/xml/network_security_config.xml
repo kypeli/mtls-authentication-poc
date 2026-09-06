@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Production / Base Configuration: Only system CAs are trusted -->
+    <base-config>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Debug Configuration: Automatically trust the local development CA and user CAs -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+            <certificates src="@raw/debug_ca" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>
