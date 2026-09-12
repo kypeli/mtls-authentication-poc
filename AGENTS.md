@@ -44,11 +44,12 @@ When making modifications or adding new features, all agents **must strictly adh
 mtls-poc/
 ├── android/
 │   ├── app/
-│   │   ├── build.gradle.kts                   # Target SDK 37, Min SDK 29, Java 11
+│   │   ├── build.gradle.kts                   # Target SDK 37, Min SDK 29, Java 11, BuildConfig BACKEND_HOST
 │   │   └── src/
 │   │       ├── main/
 │   │       │   ├── java/com/kypeli/mtlspoc/
-│   │       │   │   ├── MainActivity.kt        # Compose Activity (Needs UI binding)
+│   │       │   │   ├── MainActivity.kt        # Compose Activity (wired to MainView)
+│   │       │   │   ├── MtlsApplication.kt     # Application + Metro DI graph bootstrap
 │   │       │   │   ├── data/
 │   │       │   │   │   ├── api/
 │   │       │   │   │   │   ├── EnrollmentApi.kt       # Cleartext/HTTPS challenge & enroll calls
@@ -58,23 +59,36 @@ mtls-poc/
 │   │       │   │   │   │   ├── EnrollRequest.kt
 │   │       │   │   │   │   └── ProtectedResponse.kt
 │   │       │   │   │   └── repository/
-│   │       │   │   │       └── SecurityRepository.kt  # Lifecycle coordinator
+│   │       │   │   │       └── SecurityRepository.kt  # Lifecycle coordinator (synchronized client cache)
+│   │       │   │   ├── di/
+│   │       │   │   │   ├── AppGraph.kt                # Metro DI graph (BuildConfig host, debug flags)
+│   │       │   │   │   └── Qualifiers.kt              # @EnrollmentBaseUrl, @ProtectedBaseUrl, @DeviceId, @DebugLoggingEnabled
 │   │       │   │   ├── security/
 │   │       │   │   │   ├── AndroidKeystoreSigner.kt   # BouncyCastle ContentSigner bridge
 │   │       │   │   │   ├── CsrGenerator.kt            # DER PKCS#10 CSR generator
 │   │       │   │   │   ├── HardwareSecurityLevel.kt   # STRONGBOX, TEE, SOFTWARE enum
-│   │       │   │   │   ├── KeystoreManager.kt         # Key generation & cert chain storage
+│   │       │   │   │   ├── KeystoreManager.kt         # Key generation (alternating alias slots) & cert chain storage
 │   │       │   │   │   └── MtlsSocketFactoryBuilder.kt# TLS 1.3 SSLSocketFactory & KeyManager
 │   │       │   │   └── ui/
+│   │       │   │       ├── MainView.kt                # Compose UI
 │   │       │   │       ├── MainViewModel.kt           # StateFlow-driven presentation logic
 │   │       │   │       └── UiState.kt                 # UI state hierarchy
 │   │       │   └── AndroidManifest.xml        # INTERNET permission
 │   │       └── test/
 │   │           └── java/com/kypeli/mtlspoc/
 │   │               ├── CsrGeneratorTest.kt            # Validates CSR ASN.1 & signature
-│   │               └── MtlsSocketFactoryBuilderTest.kt# Validates SSLContext & KeyManager
+│   │               └── MtlsSocketFactoryBuilderTest.kt# Validates SSLContext, KeyManager & full TLS 1.3 handshake
 │   └── gradle/libs.versions.toml              # Centralized dependencies catalog
-└── backend/                                   # Empty directory reserved for backend service
+└── backend/                                   # Go backend service (fully implemented)
+    ├── cmd/server/                            # Dual-listener HTTPS (enroll) + mTLS 1.3 (protected) server
+    ├── cmd/certgen/                           # Local CA & server certificate generator (syncs Android debug CA)
+    └── internal/
+        ├── attestation/                       # Google root pool, OID ASN.1 parser, policy & revocation status list
+        ├── ca/                                # ECDSA P-256 CA, PKCS#10 signing, cert bootstrap (refuses overwrite)
+        ├── config/                            # Environment-based configuration
+        ├── handlers/                          # Challenge, enroll & protected ping endpoints
+        ├── middleware/                        # mTLS identity/serial/revocation binding middleware
+        └── storage/                           # Ephemeral challenge store & device registry (identity-keyed)
 ```
 
 ---
@@ -84,10 +98,10 @@ mtls-poc/
 - **Gradle Version Catalog**: All dependencies must be declared in [libs.versions.toml](file:///Users/kypeli/src/own/mtls-poc/android/gradle/libs.versions.toml).
 - Never hardcode dependency coordinates or versions inside `build.gradle.kts`.
 - Current core library stacks:
-  - **Networking**: OkHttp 4.12.0 + Moshi Kotlin 1.15.2
-  - **Cryptography**: Bouncy Castle `bcpkix-jdk18on` + `bcprov-jdk18on` 1.78.1
-  - **UI**: Jetpack Compose BOM `2026.02.01`, Material 3
-  - **Concurrency**: Kotlinx Coroutines 1.8.1
+  - **Networking**: OkHttp 5.5.0 + Moshi Kotlin 1.15.2
+  - **Cryptography**: Bouncy Castle `bcpkix-jdk18on` 1.85 + `bcprov-jdk18on` 1.85.2
+  - **UI**: Jetpack Compose BOM `2026.08.00`, Material 3
+  - **Concurrency**: Kotlinx Coroutines 1.11.0
 
 ---
 
@@ -112,17 +126,10 @@ cd android
 
 ## 📋 Outstanding Agent Tasks
 
-Agents taking on subsequent tasks should tackle the following roadmap item:
+The security review remediation (2026-09) addressed server-derived identity binding, attestation policy hardening (revocation status list, application ID, OS version/patch), enrollment input validation, mTLS serial/revocation checks, client key-slot swapping, and TLS 1.3-only connection specs. Remaining roadmap items:
 
-### 1. Compose UI Implementation (`android/app/.../MainActivity.kt`)
-- **Objective**: Connect `MainViewModel` to a clean, user-friendly Jetpack Compose UI.
-- **Requirements**:
-  - Show current enrollment status (Unenrolled vs Enrolled).
-  - Display detected hardware tier (`StrongBox` vs `TEE`).
-  - Provide an "Enroll Device Key" button that triggers `viewModel.enroll()`.
-  - Provide a "Test mTLS Ping" button that triggers `viewModel.pingProtected()`.
-  - Display progress indicators for `Enrolling` and `Authenticating` states.
-  - Display error banners for `UiState.Error`.
+1. **Persistent device registry**: The backend device registry and challenge store are in-memory; swap for a durable store before production use.
+2. **CRL/OCSP endpoints**: Revocation is enforced server-side from the registry and Google's attestation status list at enrollment; publishing a CRL for the device CA would allow the TLS layer to reject revoked client certificates even when the registry is unavailable.
 
 ---
 
@@ -133,9 +140,21 @@ Agents taking on subsequent tasks should tackle the following roadmap item:
 - **Features**:
   - Dual listeners: `:8080` (HTTPS Standard TLS Enrollment & Challenge) and `:8443` (Strict Mutual TLS 1.3).
   - Google Hardware Attestation Root CA trust pool & OID `1.3.6.1.4.1.11129.2.1.17` ASN.1 parser.
+  - Attestation policy hardening: revocation status list client, application ID binding (tag 710), OS version/patch tags (705/706), hardware-backed root-of-trust enforcement.
+  - Server-derived device identity: identity = SHA-256 of the attested public key; client-supplied `device_id` is a validated display label only.
+  - mTLS middleware binding: certificate key fingerprint, current serial, and revoked-serial/identity checks against the registry.
   - In-process ECDSA P-256 Certificate Authority with PKCS#10 CSR validation and client certificate signing.
-  - Ephemeral challenge store (single-use, monotonic TTL) and device registry.
-  - Test suite with 100% pass rate (`make test`).
+  - Ephemeral challenge store (single-use, one-minute default TTL) and identity-keyed device registry.
+  - Shared certificate bootstrap (`internal/ca/bootstrap.go`) used by both the server and `certgen`; refuses to overwrite a partial certificate set.
+  - Test suite with 100% pass rate (`make test`), including middleware, config, revocation, and identity-binding coverage.
+
+### Android Client (`android/`)
+- **Status**: Fully implemented, including the Compose UI (`MainActivity` → `MainView`).
+- **Features**:
+  - Hardware key generation with StrongBox-first and TEE fallback (cause-chain aware detection).
+  - Alternating key alias slots: a fresh key is minted in the inactive slot and swapped in only after successful enrollment.
+  - TLS 1.3-only `ConnectionSpec` for the mTLS client and a full loopback TLS 1.3 handshake unit test.
+  - Debug-gated HTTP/TLS logging, BuildConfig-driven backend host, persisted hardware security level.
 
 ---
 

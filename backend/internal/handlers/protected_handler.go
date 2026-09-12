@@ -14,7 +14,7 @@ type ProtectedResponse struct {
 	Status         string `json:"status"`
 	Message        string `json:"message"`
 	ClientIdentity string `json:"client_identity"`
-	DeviceID       string `json:"device_id"`
+	DeviceLabel    string `json:"device_label,omitempty"`
 	CertSerial     string `json:"cert_serial"`
 	Timestamp      int64  `json:"timestamp"`
 }
@@ -41,13 +41,13 @@ func (h *ProtectedPingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	}
 
 	log.Printf("[PROTECTED-PING] 🏓 Ping from authenticated device %q (Serial=%s, RemoteAddr=%s)",
-		identity.DeviceID, identity.CertSerial, r.RemoteAddr)
+		identity.Identity, identity.CertSerial, r.RemoteAddr)
 
 	resp := ProtectedResponse{
 		Status:         "ok",
 		Message:        "mTLS handshake verified successfully",
-		ClientIdentity: identity.DeviceID,
-		DeviceID:       identity.DeviceID,
+		ClientIdentity: identity.Identity,
+		DeviceLabel:    identity.Label,
 		CertSerial:     identity.CertSerial,
 		Timestamp:      time.Now().Unix(),
 	}

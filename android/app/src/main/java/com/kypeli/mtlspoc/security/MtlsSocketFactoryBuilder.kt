@@ -35,7 +35,8 @@ class MtlsSocketFactoryBuilder(
 
         return MtlsSslConfig(
             sslSocketFactory = sslContext.socketFactory,
-            trustManager = trustManager
+            trustManager = trustManager,
+            keyManager = keyManager
         )
     }
 
@@ -139,6 +140,7 @@ class MtlsSocketFactoryBuilder(
 
     data class MtlsSslConfig(
         val sslSocketFactory: SSLSocketFactory,
-        val trustManager: X509TrustManager
+        val trustManager: X509TrustManager,
+        val keyManager: X509ExtendedKeyManager
     )
 }

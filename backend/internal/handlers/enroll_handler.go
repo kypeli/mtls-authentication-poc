@@ -1,15 +1,12 @@
 package handlers
 
 import (
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/asn1"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/kypeli/mtls-poc/backend/internal/attestation"
@@ -17,13 +14,22 @@ import (
 	"github.com/kypeli/mtls-poc/backend/internal/storage"
 )
 
+const (
+	// maxEnrollBodyBytes bounds the enrollment JSON body to prevent unbounded
+	// memory use from oversized attestation chains.
+	maxEnrollBodyBytes = 256 << 10
+)
+
+// deviceLabelPattern constrains the client-supplied label: alphanumeric with
+// dots, underscores, and hyphens; it is a display label only and never becomes
+// an identity. It is safe for inclusion in certificate fields and logs.
+var deviceLabelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
 // EnrollRequest represents the incoming enrollment JSON payload.
-// Supports both 'csr' and 'csr_der', and optional explicit 'challenge'.
+// The attestation challenge is extracted from the chain, never from this body.
 type EnrollRequest struct {
-	DeviceID         string   `json:"device_id"`
-	Challenge        string   `json:"challenge,omitempty"`
-	CSR              string   `json:"csr,omitempty"`
-	CSRDer           string   `json:"csr_der,omitempty"`
+	DeviceID         string   `json:"device_id,omitempty"`
+	CSR              string   `json:"csr"`
 	AttestationChain []string `json:"attestation_chain"`
 }
 
@@ -32,6 +38,10 @@ type EnrollResponse struct {
 	ClientCertificate string   `json:"client_certificate"`
 	CaCertificate     string   `json:"ca_certificate"`
 	CertificateChain  []string `json:"certificate_chain"`
+	// DeviceIdentity is the server-derived identity (attested public key hash).
+	DeviceIdentity string `json:"device_identity,omitempty"`
+	// DeviceLabel echoes the client-supplied label.
+	DeviceLabel string `json:"device_label,omitempty"`
 }
 
 // EnrollHandler handles device key attestation verification and certificate issuance.
@@ -69,47 +79,48 @@ func (h *EnrollHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Bound the request body so a large attestation chain cannot exhaust memory.
+	r.Body = http.MaxBytesReader(w, r.Body, maxEnrollBodyBytes)
+
 	var req EnrollRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("[ENROLL] ❌ Invalid JSON body from %s: %v", r.RemoteAddr, err)
-		http.Error(w, fmt.Sprintf("Invalid JSON body: %v", err), http.StatusBadRequest)
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("[ENROLL] 📥 Received enrollment request for device_id=%q from %s", req.DeviceID, r.RemoteAddr)
-
-	if req.DeviceID == "" {
-		http.Error(w, "device_id is required", http.StatusBadRequest)
+	label := req.DeviceID
+	if label != "" && !deviceLabelPattern.MatchString(label) {
+		log.Printf("[ENROLL] ❌ Invalid device_id label %q from %s", label, r.RemoteAddr)
+		http.Error(w, "invalid device_id label", http.StatusBadRequest)
 		return
 	}
 
-	csrBase64 := req.CSR
-	if csrBase64 == "" {
-		csrBase64 = req.CSRDer
-	}
-	if csrBase64 == "" {
-		http.Error(w, "csr or csr_der is required", http.StatusBadRequest)
+	log.Printf("[ENROLL] 📥 Received enrollment request (label=%q) from %s", label, r.RemoteAddr)
+
+	if req.CSR == "" {
+		http.Error(w, "csr is required", http.StatusBadRequest)
 		return
 	}
 
-	csrDER, err := base64.StdEncoding.DecodeString(csrBase64)
+	csrDER, err := base64.StdEncoding.DecodeString(req.CSR)
 	if err != nil {
-		log.Printf("[ENROLL] ❌ Failed to decode base64 CSR for device_id=%q from %s: %v", req.DeviceID, r.RemoteAddr, err)
+		log.Printf("[ENROLL] ❌ Failed to decode base64 CSR (label=%q) from %s: %v", label, r.RemoteAddr, err)
 		http.Error(w, "failed to decode base64 CSR", http.StatusBadRequest)
 		return
 	}
 
 	parsedCSR, err := x509.ParseCertificateRequest(csrDER)
 	if err != nil {
-		log.Printf("[ENROLL] ❌ Invalid CSR DER for device_id=%q from %s: %v", req.DeviceID, r.RemoteAddr, err)
-		http.Error(w, fmt.Sprintf("invalid CSR DER: %v", err), http.StatusBadRequest)
+		log.Printf("[ENROLL] ❌ Invalid CSR DER (label=%q) from %s: %v", label, r.RemoteAddr, err)
+		http.Error(w, "invalid CSR", http.StatusBadRequest)
 		return
 	}
 
 	policy := h.verifier.Policy()
 
 	if !policy.AllowEmptyAttestation && len(req.AttestationChain) < 2 {
-		log.Printf("[ENROLL] ❌ Attestation chain too short (%d certs) for device_id=%q", len(req.AttestationChain), req.DeviceID)
+		log.Printf("[ENROLL] ❌ Attestation chain too short (%d certs) for label=%q", len(req.AttestationChain), label)
 		http.Error(w, "attestation_chain must contain at least leaf and intermediate certificates", http.StatusBadRequest)
 		return
 	}
@@ -118,50 +129,32 @@ func (h *EnrollHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for i, certB64 := range req.AttestationChain {
 		der, err := base64.StdEncoding.DecodeString(certB64)
 		if err != nil {
-			log.Printf("[ENROLL] ❌ Failed to decode cert at index %d for device_id=%q: %v", i, req.DeviceID, err)
-			http.Error(w, fmt.Sprintf("failed to decode certificate at index %d: %v", i, err), http.StatusBadRequest)
+			log.Printf("[ENROLL] ❌ Failed to decode cert at index %d (label=%q): %v", i, label, err)
+			http.Error(w, "failed to decode certificate in attestation_chain", http.StatusBadRequest)
 			return
 		}
 		chainDER = append(chainDER, der)
 	}
 
-	// Determine challenge: from request field or extracted from attestation extension
-	challengeB64 := req.Challenge
+	// The challenge nonce is bound to the attested key inside the attestation
+	// extension; it must be extracted from the chain, never from the request.
 	var challengeBytes []byte
-	if challengeB64 != "" {
-		challengeBytes, err = base64.StdEncoding.DecodeString(challengeB64)
+	if len(chainDER) > 0 {
+		challengeBytes, err = attestation.ExtractChallenge(chainDER)
 		if err != nil {
-			log.Printf("[ENROLL] ❌ Invalid base64 challenge for device_id=%q: %v", req.DeviceID, err)
-			http.Error(w, "invalid base64 challenge in request", http.StatusBadRequest)
-			return
-		}
-	} else if len(chainDER) > 0 {
-		// Extract from leaf certificate
-		leafCert, err := x509.ParseCertificate(chainDER[0])
-		if err == nil {
-			for _, ext := range leafCert.Extensions {
-				if ext.Id.String() == attestation.AndroidKeyAttestationOID {
-					var kd attestation.KeyDescription
-					if _, err := asn1.Unmarshal(ext.Value, &kd); err == nil {
-						challengeBytes = kd.AttestationChallenge
-						challengeB64 = base64.StdEncoding.EncodeToString(challengeBytes)
-					}
-					break
-				}
+			log.Printf("[ENROLL] ❌ Could not extract attestation challenge (label=%q): %v", label, err)
+			if !policy.AllowEmptyAttestation {
+				http.Error(w, "attestation challenge could not be located", http.StatusBadRequest)
+				return
 			}
+			challengeBytes = nil
 		}
 	}
 
-	if len(challengeBytes) == 0 && !policy.AllowEmptyAttestation {
-		log.Printf("[ENROLL] ❌ Attestation challenge could not be located for device_id=%q", req.DeviceID)
-		http.Error(w, "attestation challenge could not be located", http.StatusBadRequest)
-		return
-	}
-
-	// Verify and consume challenge from challenge store (single use) if a challenge was provided/located
-	if challengeB64 != "" {
+	if len(challengeBytes) > 0 {
+		challengeB64 := base64.StdEncoding.EncodeToString(challengeBytes)
 		if !h.store.VerifyAndConsumeChallenge(challengeB64) {
-			log.Printf("[ENROLL] ❌ Invalid or expired attestation challenge for device_id=%q", req.DeviceID)
+			log.Printf("[ENROLL] ❌ Invalid or expired attestation challenge (label=%q)", label)
 			http.Error(w, "invalid or expired attestation challenge", http.StatusBadRequest)
 			return
 		}
@@ -173,48 +166,79 @@ func (h *EnrollHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Perform Android Key Attestation verification
 	record, err := h.verifier.VerifyAttestation(chainDER, challengeBytes, parsedCSR.PublicKey)
 	if err != nil {
-		log.Printf("[ENROLL] ❌ Attestation verification failed for device_id=%q: %v", req.DeviceID, err)
-		http.Error(w, fmt.Sprintf("attestation verification failed: %v", err), http.StatusForbidden)
+		log.Printf("[ENROLL] ❌ Attestation verification failed (label=%q): %v", label, err)
+		http.Error(w, "attestation verification failed", http.StatusForbidden)
 		return
 	}
 
-	log.Printf("[ENROLL] 🛡️ Attestation verified for device_id=%q: HardwareSecurityLevel=%s",
-		req.DeviceID, record.AttestationSecurityLevel)
-
-	// Sign CSR via in-process CA
-	clientCert, clientPEM, err := h.ca.SignCSR(csrDER, req.DeviceID, h.clientCertTTL)
+	// Identity is derived server-side from the attested public key hash; the
+	// client-chosen device_id is only a label.
+	identity, err := attestation.PublicKeyFingerprint(parsedCSR.PublicKey)
 	if err != nil {
-		log.Printf("[ENROLL] ❌ Failed to sign CSR for device_id=%q: %v", req.DeviceID, err)
-		http.Error(w, fmt.Sprintf("failed to sign CSR: %v", err), http.StatusInternalServerError)
+		log.Printf("[ENROLL] ❌ Failed to derive identity from public key (label=%q): %v", label, err)
+		http.Error(w, "failed to derive device identity", http.StatusInternalServerError)
 		return
 	}
 
-	// Calculate public key fingerprint
-	pubKeyPKIX, _ := x509.MarshalPKIXPublicKey(parsedCSR.PublicKey)
-	fingerprint := sha256.Sum256(pubKeyPKIX)
+	log.Printf("[ENROLL] 🛡️ Attestation verified (label=%q): identity=%s, HardwareSecurityLevel=%s",
+		label, shortIdentity(identity), record.AttestationSecurityLevel)
 
-	// Persist device record
+	// Refuse enrollment when this identity (the attested key) has been revoked;
+	// re-enrolling with the same key would otherwise bypass revocation.
+	if existing, getErr := h.deviceRepo.GetDevice(identity); getErr == nil && existing.IsRevoked {
+		log.Printf("[ENROLL] ❌ Identity %s is revoked; re-enrollment refused", shortIdentity(identity))
+		http.Error(w, "device identity is revoked", http.StatusForbidden)
+		return
+	}
+
+	// Sign CSR via in-process CA. The certificate CN carries the server-derived
+	// identity, not the client label.
+	clientCert, clientPEM, err := h.ca.SignCSR(csrDER, identity, h.clientCertTTL)
+	if err != nil {
+		log.Printf("[ENROLL] ❌ Failed to sign CSR (label=%q): %v", label, err)
+		http.Error(w, "failed to sign CSR", http.StatusInternalServerError)
+		return
+	}
+
+	// Persist the device record before responding. If the write fails, the
+	// freshly issued certificate is revoked so no valid but untracked
+	// certificate remains in circulation.
 	devRecord := storage.DeviceRecord{
-		DeviceID:              req.DeviceID,
-		PublicKeyFingerprint:  hex.EncodeToString(fingerprint[:]),
+		Identity:              identity,
+		Label:                 label,
 		CertSerial:            clientCert.SerialNumber.String(),
 		EnrolledAt:            time.Now(),
 		IsRevoked:             false,
 		HardwareSecurityLevel: record.AttestationSecurityLevel.String(),
 	}
-	_ = h.deviceRepo.RegisterDevice(devRecord)
+	if err := h.deviceRepo.RegisterDevice(devRecord); err != nil {
+		_ = h.deviceRepo.RevokeSerial(clientCert.SerialNumber.String())
+		log.Printf("[ENROLL] ❌ Failed to persist device record for %s: %v (serial %s revoked)", shortIdentity(identity), err, clientCert.SerialNumber.String())
+		http.Error(w, "failed to persist device record", http.StatusInternalServerError)
+		return
+	}
 
-	log.Printf("[ENROLL] 📜 Issued client certificate for device_id=%q: Serial=%s, TTL=%v",
-		req.DeviceID, clientCert.SerialNumber.String(), h.clientCertTTL)
+	log.Printf("[ENROLL] 📜 Issued client certificate for identity=%s (label=%q): Serial=%s, TTL=%v",
+		shortIdentity(identity), label, clientCert.SerialNumber.String(), h.clientCertTTL)
 
 	clientPEMStr := string(clientPEM)
 	resp := EnrollResponse{
 		ClientCertificate: clientPEMStr,
 		CaCertificate:     h.caPEM,
 		CertificateChain:  []string{clientPEMStr, h.caPEM},
+		DeviceIdentity:    identity,
+		DeviceLabel:       label,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// shortIdentity truncates a hex identity for compact log output.
+func shortIdentity(identity string) string {
+	if len(identity) <= 16 {
+		return identity
+	}
+	return identity[:16] + "..."
 }

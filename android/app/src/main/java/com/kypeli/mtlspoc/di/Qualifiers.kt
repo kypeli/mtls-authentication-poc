@@ -31,3 +31,13 @@ annotation class ProtectedBaseUrl
     AnnotationTarget.FIELD,
 )
 annotation class DeviceId
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+@Target(
+    AnnotationTarget.PROPERTY_GETTER,
+    AnnotationTarget.FUNCTION,
+    AnnotationTarget.VALUE_PARAMETER,
+    AnnotationTarget.FIELD,
+)
+annotation class DebugLoggingEnabled

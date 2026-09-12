@@ -6,9 +6,20 @@ const (
 	// AndroidKeyAttestationOID is the X.509 extension OID for Key Description.
 	AndroidKeyAttestationOID = "1.3.6.1.4.1.11129.2.1.17"
 
-	TagRootOfTrust = 704
-	TagOSVersion   = 705
-	TagOSPatch     = 706
+	TagRootOfTrust              = 704
+	TagOSVersion                = 705
+	TagOSPatch                  = 706
+	// TagAttestationApplicationId is KM_TAG_ATTESTATION_APPLICATION_ID (tag 709).
+	// Note: 710 is the attestation ID *brand* tag, not the application ID.
+	TagAttestationApplicationId = 709
+	TagAttestationIDBrand       = 710
+	TagAttestationIDDevice      = 711
+	TagAttestationIDProduct     = 712
+	TagAttestationIDSerial      = 713
+	TagAttestationIDIMEI        = 714
+	TagAttestationIDMEID        = 715
+	TagAttestationIDManufacturer = 716
+	TagAttestationIDModel       = 717
 )
 
 type SecurityLevel int
@@ -86,6 +97,8 @@ type AttestationRecord struct {
 	DeviceLocked             bool
 	VerifiedBootState        VerifiedBootState
 	VerifiedBootKey          []byte
+	OsVersion                int
+	OsPatchLevel             int
 }
 
 // Policy defines requirements for attestation verification.
@@ -95,6 +108,18 @@ type Policy struct {
 	RequireVerifiedBoot   bool // Requires verifiedBootState == Verified (0)
 	SkipChainValidation   bool // In dev mode, skips verifying the cert chain against Google's hardware root
 	AllowEmptyAttestation bool // In dev mode, allows enrollment without attestation cert chain
+	// ExpectedPackageName, when non-empty, requires the attestation application ID
+	// (tag 710) to list the given package, binding the key to this app only.
+	ExpectedPackageName string
+	// MinOsVersion, when > 0, requires the attested OS version (tag 705, MMmmnn
+	// format, e.g. 140000 for Android 14.0.0) to be at least this value.
+	MinOsVersion int
+	// MinPatchLevel, when > 0, requires the attested OS patch level (tag 706,
+	// YYYYMMDD) to be at least this value.
+	MinPatchLevel int
+	// CheckRevocationList consults Google's attestation revocation status list
+	// for the leaf and intermediate certificate keys during verification.
+	CheckRevocationList bool
 }
 
 // DefaultStrictPolicy returns the production zero-trust security policy.
@@ -105,6 +130,7 @@ func DefaultStrictPolicy() Policy {
 		RequireVerifiedBoot:   true,
 		SkipChainValidation:   false,
 		AllowEmptyAttestation: false,
+		CheckRevocationList:   true,
 	}
 }
 
@@ -116,5 +142,6 @@ func DevelopmentPolicy() Policy {
 		RequireVerifiedBoot:   false,
 		SkipChainValidation:   true,
 		AllowEmptyAttestation: true,
+		CheckRevocationList:   false,
 	}
 }

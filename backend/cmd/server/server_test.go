@@ -238,21 +238,28 @@ func TestEndToEndEnrollmentAndMtls(t *testing.T) {
 		t.Fatal("expected TLS handshake failure for client without certificate, got nil error")
 	}
 
-	// 6. Generate valid client key & certificate signed by the CA for device 'dev-e2e-100'
+	// 6. Generate valid client key & certificate signed by the CA for device 'dev-e2e-100'.
+	// The identity is derived server-side from the public key hash.
 	clientKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	csrTemplate := x509.CertificateRequest{
 		Subject: pkix.Name{CommonName: "dev-e2e-100"},
 	}
 	csrDER, _ := x509.CreateCertificateRequest(rand.Reader, &csrTemplate, clientKey)
 
-	clientCert, _, err := caInstance.SignCSR(csrDER, "dev-e2e-100", 24*time.Hour)
+	identity, err := attestation.PublicKeyFingerprint(&clientKey.PublicKey)
+	if err != nil {
+		t.Fatalf("failed to derive identity: %v", err)
+	}
+
+	clientCert, _, err := caInstance.SignCSR(csrDER, identity, 24*time.Hour)
 	if err != nil {
 		t.Fatalf("SignCSR failed: %v", err)
 	}
 
 	// Register device in repository
 	_ = deviceRepo.RegisterDevice(storage.DeviceRecord{
-		DeviceID:              "dev-e2e-100",
+		Identity:              identity,
+		Label:                 "dev-e2e-100",
 		CertSerial:            clientCert.SerialNumber.String(),
 		EnrolledAt:            time.Now(),
 		IsRevoked:             false,
@@ -304,12 +311,12 @@ func TestEndToEndEnrollmentAndMtls(t *testing.T) {
 		t.Fatalf("failed to decode ping response: %v", err)
 	}
 
-	if res.Status != "ok" || res.DeviceID != "dev-e2e-100" || res.ClientIdentity != "dev-e2e-100" {
+	if res.Status != "ok" || res.ClientIdentity != identity || res.DeviceLabel != "dev-e2e-100" {
 		t.Fatalf("unexpected protected response: %+v", res)
 	}
 
 	// 8. Revoke device -> verify mTLS endpoint returns 403 Forbidden
-	_ = deviceRepo.RevokeDevice("dev-e2e-100")
+	_ = deviceRepo.RevokeDevice(identity)
 	revokedResp, err := authClient.Get("https://memory/api/v1/protected/ping")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)

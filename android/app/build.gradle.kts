@@ -19,6 +19,10 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Backend base URL (scheme included) for both the enrollment (:8080) and
+        // mTLS (:8443) ports. Override per build type or via -PbackendHost.
+        buildConfigField("String", "BACKEND_HOST", "\"https://${project.findProperty("backendHost") ?: "10.0.2.2"}\"")
     }
 
     buildTypes {
@@ -34,6 +38,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {

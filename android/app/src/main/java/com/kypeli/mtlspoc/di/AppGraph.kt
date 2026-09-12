@@ -1,7 +1,9 @@
 package com.kypeli.mtlspoc.di
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.provider.Settings
+import com.kypeli.mtlspoc.BuildConfig
 import com.kypeli.mtlspoc.data.repository.SecurityRepository
 import com.kypeli.mtlspoc.ui.MainViewModel
 import dev.zacsweers.metro.AppScope
@@ -9,9 +11,6 @@ import dev.zacsweers.metro.DependencyGraph
 import dev.zacsweers.metro.Provides
 import dev.zacsweers.metro.SingleIn
 import okhttp3.OkHttpClient
-import okhttp3.logging.HttpLoggingInterceptor
-
-private val BASE_URL = "https://192.168.1.150"
 
 @SingleIn(AppScope::class)
 @DependencyGraph(AppScope::class)
@@ -21,24 +20,32 @@ interface AppGraph {
 
     @Provides
     @SingleIn(AppScope::class)
-    fun provideOkHttpClient(): OkHttpClient {
-        val logging =
-            HttpLoggingInterceptor().apply {
-                level = HttpLoggingInterceptor.Level.BODY
-            }
-        return OkHttpClient
-            .Builder()
-            .addInterceptor(logging)
-            .build()
+    fun provideOkHttpClient(
+        @DebugLoggingEnabled debugLoggingEnabled: Boolean,
+    ): OkHttpClient {
+        val builder = OkHttpClient.Builder()
+        if (debugLoggingEnabled) {
+            val logging =
+                okhttp3.logging.HttpLoggingInterceptor().apply {
+                    level = okhttp3.logging.HttpLoggingInterceptor.Level.BODY
+                }
+            builder.addInterceptor(logging)
+        }
+        return builder.build()
     }
 
     @Provides
+    @DebugLoggingEnabled
+    fun provideDebugLoggingEnabled(context: Context): Boolean =
+        (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+
+    @Provides
     @EnrollmentBaseUrl
-    fun provideEnrollmentBaseUrl(): String = "$BASE_URL:8080"
+    fun provideEnrollmentBaseUrl(): String = "${BuildConfig.BACKEND_HOST}:8080"
 
     @Provides
     @ProtectedBaseUrl
-    fun provideProtectedBaseUrl(): String = "$BASE_URL:8443"
+    fun provideProtectedBaseUrl(): String = "${BuildConfig.BACKEND_HOST}:8443"
 
     @Provides
     @DeviceId

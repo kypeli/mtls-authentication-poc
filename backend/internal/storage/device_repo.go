@@ -13,8 +13,12 @@ var (
 
 // DeviceRecord stores metadata about an enrolled hardware device.
 type DeviceRecord struct {
-	DeviceID              string    `json:"device_id"`
-	PublicKeyFingerprint  string    `json:"public_key_fingerprint"`
+	// Identity is the server-derived device identity: the hex-encoded SHA-256
+	// of the attested public key's SubjectPublicKeyInfo. It is the primary key
+	// for the record and can never be chosen by the client.
+	Identity string `json:"identity"`
+	// Label is the client-supplied device_id, treated as a display label only.
+	Label                 string    `json:"label,omitempty"`
 	CertSerial            string    `json:"cert_serial"`
 	EnrolledAt            time.Time `json:"enrolled_at"`
 	IsRevoked             bool      `json:"is_revoked"`
@@ -24,56 +28,78 @@ type DeviceRecord struct {
 // DeviceRepo manages device registration and revocation.
 type DeviceRepo interface {
 	RegisterDevice(record DeviceRecord) error
-	GetDevice(deviceID string) (*DeviceRecord, error)
-	RevokeDevice(deviceID string) error
-	IsDeviceActive(deviceID string) bool
+	GetDevice(identity string) (*DeviceRecord, error)
+	RevokeDevice(identity string) error
+	// RevokeSerial marks a single certificate serial as revoked. Revoked serials
+	// are consulted during peer verification so a re-issued or rotated
+	// certificate cannot resurrect a revoked device's credentials.
+	RevokeSerial(serial string) error
+	IsSerialRevoked(serial string) bool
+	IsDeviceActive(identity string) bool
 }
 
 type memoryDeviceRepo struct {
-	mu      sync.RWMutex
-	devices map[string]DeviceRecord
+	mu             sync.RWMutex
+	devices        map[string]DeviceRecord
+	revokedSerials map[string]struct{}
 }
 
 // NewMemoryDeviceRepo constructs an in-memory thread-safe DeviceRepo.
 func NewMemoryDeviceRepo() DeviceRepo {
 	return &memoryDeviceRepo{
-		devices: make(map[string]DeviceRecord),
+		devices:        make(map[string]DeviceRecord),
+		revokedSerials: make(map[string]struct{}),
 	}
 }
 
 func (r *memoryDeviceRepo) RegisterDevice(record DeviceRecord) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.devices[record.DeviceID] = record
+	r.devices[record.Identity] = record
 	return nil
 }
 
-func (r *memoryDeviceRepo) GetDevice(deviceID string) (*DeviceRecord, error) {
+func (r *memoryDeviceRepo) GetDevice(identity string) (*DeviceRecord, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	record, exists := r.devices[deviceID]
+	record, exists := r.devices[identity]
 	if !exists {
 		return nil, ErrDeviceNotFound
 	}
 	return &record, nil
 }
 
-func (r *memoryDeviceRepo) RevokeDevice(deviceID string) error {
+func (r *memoryDeviceRepo) RevokeDevice(identity string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	record, exists := r.devices[deviceID]
+	record, exists := r.devices[identity]
 	if !exists {
 		return ErrDeviceNotFound
 	}
 	record.IsRevoked = true
-	r.devices[deviceID] = record
+	r.devices[identity] = record
+	r.revokedSerials[record.CertSerial] = struct{}{}
 	return nil
 }
 
-func (r *memoryDeviceRepo) IsDeviceActive(deviceID string) bool {
+func (r *memoryDeviceRepo) RevokeSerial(serial string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.revokedSerials[serial] = struct{}{}
+	return nil
+}
+
+func (r *memoryDeviceRepo) IsSerialRevoked(serial string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	record, exists := r.devices[deviceID]
+	_, revoked := r.revokedSerials[serial]
+	return revoked
+}
+
+func (r *memoryDeviceRepo) IsDeviceActive(identity string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	record, exists := r.devices[identity]
 	if !exists {
 		return false
 	}

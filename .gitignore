@@ -13,7 +13,12 @@ captures/
 .idea/
 **/.idea/
 
-# Backend build artifacts & private keys
+# Backend build artifacts; generated dev certificates are never committed —
+# a committed CA certificate without its key causes silent trust mismatches
 /backend/bin/
-/backend/certs/*.key
+/backend/certs/
+*.srl
+
+# Generated debug trust anchor (copied from backend/certs/ca.crt by `make certgen`)
+/android/app/src/debug/res/raw/debug_ca.crt
 

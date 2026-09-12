@@ -2,17 +2,10 @@ package main
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"log"
-	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -65,9 +58,20 @@ func main() {
 		log.Printf("⚠️  DEV_MODE enabled: using lenient attestation policy for local/emulator testing")
 		policy = attestation.DevelopmentPolicy()
 	}
+	policy.ExpectedPackageName = cfg.ExpectedAppPackage
+	policy.MinOsVersion = cfg.MinOsVersion
+	policy.MinPatchLevel = cfg.MinPatchLevel
+	policy.CheckRevocationList = cfg.RequireRevocationCheck
 	verifier, err := attestation.NewVerifier(nil, policy)
 	if err != nil {
 		log.Fatalf("Failed to initialize attestation verifier: %v", err)
+	}
+	if cfg.RequireRevocationCheck {
+		verifier.WithRevocationChecker(attestation.NewRevocationStatusClient(cfg.RevocationListURL, 24*time.Hour, nil))
+		log.Printf("🛡️  Attestation revocation status list check enabled: %s", cfg.RevocationListURL)
+	}
+	if cfg.ExpectedAppPackage != "" {
+		log.Printf("🛡️  Attestation application ID enforced for package: %s", cfg.ExpectedAppPackage)
 	}
 
 	// 4. Setup Enrollment HTTPS Server (Standard TLS, Port 8080)
@@ -176,108 +180,19 @@ func main() {
 }
 
 func ensureCertificates(cfg *config.Config) error {
-	if err := os.MkdirAll(cfg.CertDir, 0755); err != nil {
-		return fmt.Errorf("failed to create certs directory: %w", err)
-	}
-
-	caExists := fileExists(cfg.CaCertPath) && fileExists(cfg.CaKeyPath)
-	serverExists := fileExists(cfg.ServerCertPath) && fileExists(cfg.ServerKeyPath)
-
-	if caExists && serverExists {
-		return nil
-	}
-
-	log.Printf("Certificates missing in %s; bootstrapping local root CA and server TLS certificates...", cfg.CertDir)
-
-	caInstance, caCertPEM, caKeyPEM, err := ca.GenerateCA("Hardware mTLS PoC Root CA", 10*365*24*time.Hour)
-	if err != nil {
-		return fmt.Errorf("failed to generate Root CA: %w", err)
-	}
-
-	if err := os.WriteFile(cfg.CaKeyPath, caKeyPEM, 0600); err != nil {
-		return err
-	}
-	if err := os.WriteFile(cfg.CaCertPath, caCertPEM, 0644); err != nil {
-		return err
-	}
-
-	// Generate Server TLS key & cert signed by CA
-	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return err
-	}
-
-	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
-	serverSerial, _ := rand.Int(rand.Reader, serialNumberLimit)
-
-	serverTemplate := x509.Certificate{
-		SerialNumber: serverSerial,
-		Subject: pkix.Name{
-			CommonName:   "localhost",
-			Organization: []string{"Hardware mTLS Server"},
+	if _, err := ca.BootstrapCertificates(ca.BootstrapOptions{
+		Paths: ca.BootstrapPaths{
+			CaCertPath:     cfg.CaCertPath,
+			CaKeyPath:      cfg.CaKeyPath,
+			ServerCertPath: cfg.ServerCertPath,
+			ServerKeyPath:  cfg.ServerKeyPath,
 		},
-		DNSNames: []string{
-			"localhost",
-			"android.local",
-		},
-		IPAddresses:           getHostSANIPs(),
-		NotBefore:             time.Now().Add(-1 * time.Minute),
-		NotAfter:              time.Now().Add(5 * 365 * 24 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-	}
-
-	serverCertDER, err := x509.CreateCertificate(rand.Reader, &serverTemplate, caInstance.Certificate, &serverKey.PublicKey, caInstance.PrivateKey)
-	if err != nil {
+		CaCN:     "Hardware mTLS PoC Root CA",
+		ServerCN: "localhost",
+	}); err != nil {
 		return err
 	}
-
-	serverCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCertDER})
-	serverKeyDER, _ := x509.MarshalECPrivateKey(serverKey)
-	serverKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: serverKeyDER})
-
-	if err := os.WriteFile(cfg.ServerKeyPath, serverKeyPEM, 0600); err != nil {
-		return err
-	}
-	if err := os.WriteFile(cfg.ServerCertPath, serverCertPEM, 0644); err != nil {
-		return err
-	}
-
-	log.Printf("Successfully bootstrapped local CA and Server TLS certificates in %s", cfg.CertDir)
 	return nil
-}
-
-func getHostSANIPs() []net.IP {
-	ips := []net.IP{
-		net.ParseIP("127.0.0.1"),
-		net.ParseIP("10.0.2.2"), // Android emulator host alias
-		net.ParseIP("::1"),
-	}
-	if ifaces, err := net.Interfaces(); err == nil {
-		for _, iface := range ifaces {
-			if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-				continue
-			}
-			addrs, err := iface.Addrs()
-			if err != nil {
-				continue
-			}
-			for _, addr := range addrs {
-				if ipNet, ok := addr.(*net.IPNet); ok {
-					if ip4 := ipNet.IP.To4(); ip4 != nil {
-						ips = append(ips, ip4)
-					}
-				}
-			}
-		}
-	}
-	return ips
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }
 
 func connStateLogger(tag string) func(net.Conn, http.ConnState) {
