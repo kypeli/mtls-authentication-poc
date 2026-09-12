@@ -17,7 +17,9 @@ import javax.net.ssl.X509TrustManager
 
 class MtlsSocketFactoryBuilder(
     private val keyStore: KeyStore,
-    private val clientAlias: String = KeystoreManager.DEFAULT_ALIAS
+    private val clientAlias: String = KeystoreManager.DEFAULT_ALIAS,
+    private val clientCertificateChain: Array<X509Certificate>? = null,
+    private val logger: (String) -> Unit = {},
 ) {
 
     /**
@@ -48,6 +50,7 @@ class MtlsSocketFactoryBuilder(
                 issuers: Array<out Principal>?,
                 socket: Socket?
             ): String {
+                logger("chooseClientAlias keyType=${keyType?.joinToString()} issuers=${issuers?.map { it.name }?.joinToString()}")
                 return clientAlias
             }
 
@@ -65,38 +68,73 @@ class MtlsSocketFactoryBuilder(
 
             override fun getCertificateChain(alias: String?): Array<X509Certificate>? {
                 val targetAlias = alias ?: clientAlias
-                val chain = keyStore.getCertificateChain(targetAlias) ?: return null
-                return chain.mapNotNull { it as? X509Certificate }.toTypedArray()
+                clientCertificateChain?.let {
+                    logger("getCertificateChain($targetAlias) -> explicit chain of ${it.size}")
+                    return it
+                }
+                val chain = keyStore.getCertificateChain(targetAlias)
+                logger("getCertificateChain($targetAlias) -> keystore chain of ${chain?.size ?: 0}")
+                return chain?.mapNotNull { it as? X509Certificate }?.toTypedArray()
             }
 
             override fun getPrivateKey(alias: String?): PrivateKey? {
                 val targetAlias = alias ?: clientAlias
-                return keyStore.getKey(targetAlias, null) as? PrivateKey
+                val key = keyStore.getKey(targetAlias, null) as? PrivateKey
+                logger("getPrivateKey($targetAlias) -> ${key?.javaClass?.name ?: "null"}")
+                return key
             }
         }
     }
 
     private fun createTrustManager(caCertInputStream: InputStream?): X509TrustManager {
-        val tmf = if (caCertInputStream != null) {
-            val cf = CertificateFactory.getInstance("X.509")
-            val caCert = cf.generateCertificate(caCertInputStream) as X509Certificate
+        val delegate =
+            if (caCertInputStream != null) {
+                val cf = CertificateFactory.getInstance("X.509")
+                val caCert = cf.generateCertificate(caCertInputStream) as X509Certificate
+                logger("trust anchor = ${caCert.subjectDN}")
 
-            val caKeyStore = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
-                load(null, null)
-                setCertificateEntry("backend_ca", caCert)
+                val caKeyStore = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
+                    load(null, null)
+                    setCertificateEntry("backend_ca", caCert)
+                }
+
+                TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply {
+                    init(caKeyStore)
+                }
+            } else {
+                logger("trust anchor = SYSTEM")
+                TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply {
+                    init(null as KeyStore?)
+                }
             }
 
-            TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply {
-                init(caKeyStore)
+        val impl = delegate.trustManagers.filterIsInstance<X509TrustManager>().firstOrNull()
+            ?: throw IllegalStateException("No X509TrustManager found")
+        logger("trust managers acquired: ${delegate.trustManagers.map { it.javaClass.simpleName }}")
+
+        return object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                logger("checkClientTrusted len=${chain?.size} authType=$authType")
+                impl.checkClientTrusted(chain, authType)
             }
-        } else {
-            TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply {
-                init(null as KeyStore?)
+
+            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                logger("checkServerTrusted len=${chain?.size} authType=$authType subject=${chain?.firstOrNull()?.subjectX500Principal?.name}")
+                try {
+                    impl.checkServerTrusted(chain, authType)
+                    logger("checkServerTrusted OK")
+                } catch (t: Throwable) {
+                    logger("checkServerTrusted FAILED: ${t.javaClass.simpleName}: ${t.message}")
+                    throw t
+                }
+            }
+
+            override fun getAcceptedIssuers(): Array<X509Certificate> {
+                val issuers = impl.acceptedIssuers
+                logger("getAcceptedIssuers count=${issuers.size} ${issuers.map { it.subjectX500Principal.name }}")
+                return issuers
             }
         }
-
-        return tmf.trustManagers.filterIsInstance<X509TrustManager>().firstOrNull()
-            ?: throw IllegalStateException("No X509TrustManager found")
     }
 
     data class MtlsSslConfig(

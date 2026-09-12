@@ -93,10 +93,13 @@ func main() {
 		cfg.ClientCertTTL,
 	))
 
+	attachTLSInspectors(enrollTLSConfig, "ENROLL")
 	enrollServer := &http.Server{
 		Addr:         cfg.EnrollPort,
 		Handler:      requestLogger(enrollMux, "ENROLL"),
 		TLSConfig:    enrollTLSConfig,
+		ConnState:    connStateLogger("ENROLL"),
+		ErrorLog:     log.New(os.Stderr, "[ENROLL-ERR] ", log.LstdFlags),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 	}
@@ -115,6 +118,7 @@ func main() {
 		MinVersion:   tls.VersionTLS13,
 	}
 
+	attachTLSInspectors(tlsConfig, "MTLS")
 	mtlsMux := http.NewServeMux()
 	pingHandler := handlers.NewProtectedPingHandler()
 	mtlsMux.Handle("/api/v1/protected/ping", middleware.MtlsAuthMiddleware(deviceRepo)(pingHandler))
@@ -123,6 +127,8 @@ func main() {
 		Addr:         cfg.MtlsPort,
 		Handler:      requestLogger(mtlsMux, "MTLS"),
 		TLSConfig:    tlsConfig,
+		ConnState:    connStateLogger("MTLS"),
+		ErrorLog:     log.New(os.Stderr, "[MTLS-ERR] ", log.LstdFlags),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 	}
@@ -214,11 +220,7 @@ func ensureCertificates(cfg *config.Config) error {
 			"localhost",
 			"android.local",
 		},
-		IPAddresses: []net.IP{
-			net.ParseIP("127.0.0.1"),
-			net.ParseIP("10.0.2.2"), // Android emulator host alias
-			net.ParseIP("::1"),
-		},
+		IPAddresses:           getHostSANIPs(),
 		NotBefore:             time.Now().Add(-1 * time.Minute),
 		NotAfter:              time.Now().Add(5 * 365 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
@@ -246,15 +248,138 @@ func ensureCertificates(cfg *config.Config) error {
 	return nil
 }
 
+func getHostSANIPs() []net.IP {
+	ips := []net.IP{
+		net.ParseIP("127.0.0.1"),
+		net.ParseIP("10.0.2.2"), // Android emulator host alias
+		net.ParseIP("::1"),
+	}
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, addr := range addrs {
+				if ipNet, ok := addr.(*net.IPNet); ok {
+					if ip4 := ipNet.IP.To4(); ip4 != nil {
+						ips = append(ips, ip4)
+					}
+				}
+			}
+		}
+	}
+	return ips
+}
+
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
 }
 
+func connStateLogger(tag string) func(net.Conn, http.ConnState) {
+	return func(conn net.Conn, state http.ConnState) {
+		remote := "unknown"
+		if conn != nil && conn.RemoteAddr() != nil {
+			remote = conn.RemoteAddr().String()
+		}
+		log.Printf("[%s-TCP] Connection %s state -> %s", tag, remote, state)
+	}
+}
+
+func attachTLSInspectors(cfg *tls.Config, tag string) {
+	origGetConfig := cfg.GetConfigForClient
+	cfg.GetConfigForClient = func(chi *tls.ClientHelloInfo) (*tls.Config, error) {
+		remoteAddr := "unknown"
+		if chi.Conn != nil && chi.Conn.RemoteAddr() != nil {
+			remoteAddr = chi.Conn.RemoteAddr().String()
+		}
+		versions := make([]string, 0, len(chi.SupportedVersions))
+		for _, v := range chi.SupportedVersions {
+			versions = append(versions, tls.VersionName(v))
+		}
+		log.Printf("[%s-TLS] 🤝 ClientHello from %s: SNI=%q, ALPN=%v, Versions=%v, CiphersCount=%d",
+			tag, remoteAddr, chi.ServerName, chi.SupportedProtos, versions, len(chi.CipherSuites))
+
+		if origGetConfig != nil {
+			return origGetConfig(chi)
+		}
+		return nil, nil
+	}
+
+	origVerify := cfg.VerifyConnection
+	cfg.VerifyConnection = func(cs tls.ConnectionState) error {
+		log.Printf("[%s-TLS] 🔒 Handshake completed: Version=%s, Cipher=%s, ALPN=%q, SNI=%q, Resumed=%v, PeerCerts=%d",
+			tag,
+			tls.VersionName(cs.Version),
+			tls.CipherSuiteName(cs.CipherSuite),
+			cs.NegotiatedProtocol,
+			cs.ServerName,
+			cs.DidResume,
+			len(cs.PeerCertificates),
+		)
+		for i, cert := range cs.PeerCertificates {
+			log.Printf("[%s-TLS]   ├─ PeerCert[%d]: SubjectCN=%q, Serial=%s, IssuerCN=%q, NotAfter=%s",
+				tag, i, cert.Subject.CommonName, cert.SerialNumber.String(), cert.Issuer.CommonName, cert.NotAfter.Format(time.RFC3339))
+		}
+		if origVerify != nil {
+			return origVerify(cs)
+		}
+		return nil
+	}
+}
+
+type responseRecorder struct {
+	http.ResponseWriter
+	statusCode   int
+	bytesWritten int64
+}
+
+func (rec *responseRecorder) WriteHeader(code int) {
+	rec.statusCode = code
+	rec.ResponseWriter.WriteHeader(code)
+}
+
+func (rec *responseRecorder) Write(b []byte) (int, error) {
+	if rec.statusCode == 0 {
+		rec.statusCode = http.StatusOK
+	}
+	n, err := rec.ResponseWriter.Write(b)
+	rec.bytesWritten += int64(n)
+	return n, err
+}
+
+func (rec *responseRecorder) Flush() {
+	if f, ok := rec.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func requestLogger(next http.Handler, tag string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		next.ServeHTTP(w, r)
-		log.Printf("[%s] %s %s from %s in %v", tag, r.Method, r.URL.Path, r.RemoteAddr, time.Since(start))
+		tlsInfo := "none"
+		if r.TLS != nil {
+			tlsInfo = fmt.Sprintf("ver=%s, cipher=%s, client_certs=%d",
+				tls.VersionName(r.TLS.Version),
+				tls.CipherSuiteName(r.TLS.CipherSuite),
+				len(r.TLS.PeerCertificates),
+			)
+		}
+		ua := r.UserAgent()
+		if ua == "" {
+			ua = "-"
+		}
+		log.Printf("[%s-HTTP] --> %s %s from %s (Proto: %s, Host: %s, UA: %s, TLS: %s)",
+			tag, r.Method, r.URL.Path, r.RemoteAddr, r.Proto, r.Host, ua, tlsInfo)
+
+		rec := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(rec, r)
+
+		log.Printf("[%s-HTTP] <-- %d %s for %s in %v (%d bytes)",
+			tag, rec.statusCode, r.URL.Path, r.RemoteAddr, time.Since(start), rec.bytesWritten)
 	})
 }

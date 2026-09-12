@@ -3,7 +3,7 @@ package com.kypeli.mtlspoc.ui
 import com.kypeli.mtlspoc.security.HardwareSecurityLevel
 
 sealed interface UiState {
-    object Idle : UiState
+    data object Idle : UiState
 
     data class Enrolling(
         val message: String = "Enrolling key in hardware...",
@@ -22,6 +22,7 @@ sealed interface UiState {
     data class Authenticated(
         val message: String,
         val timestamp: Long? = null,
+        val clientIdentity: String? = null,
     ) : UiState
 
     data class Error(

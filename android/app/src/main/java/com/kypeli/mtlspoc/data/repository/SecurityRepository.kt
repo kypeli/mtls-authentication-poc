@@ -7,30 +7,35 @@ import com.kypeli.mtlspoc.data.api.ProtectedApi
 import com.kypeli.mtlspoc.data.model.EnrollRequest
 import com.kypeli.mtlspoc.data.model.EnrollResponse
 import com.kypeli.mtlspoc.data.model.ProtectedResponse
+import com.kypeli.mtlspoc.di.DeviceId
+import com.kypeli.mtlspoc.di.ProtectedBaseUrl
 import com.kypeli.mtlspoc.security.CsrGenerator
 import com.kypeli.mtlspoc.security.HardwareSecurityLevel
 import com.kypeli.mtlspoc.security.KeystoreManager
 import com.kypeli.mtlspoc.security.MtlsSocketFactoryBuilder
+import dev.zacsweers.metro.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
 import java.io.ByteArrayInputStream
 import java.security.cert.Certificate
 import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
 
+@Inject
 class SecurityRepository(
     private val keystoreManager: KeystoreManager,
     private val enrollmentApi: EnrollmentApi,
-    private val protectedBaseUrl: String,
-    private val deviceId: String,
+    @param:ProtectedBaseUrl private val protectedBaseUrl: String,
+    @param:DeviceId private val deviceId: String,
 ) {
     private var protectedApi: ProtectedApi? = null
 
-    fun isEnrolled(): Boolean {
-        val cert = keystoreManager.getLeafCertificate() ?: return false
-        // Check if certificate has an issuer different from self-signed attestation leaf or valid chain
-        return keystoreManager.hasKey() && cert.subjectDN != null
-    }
+    private var cachedClientChain: Array<X509Certificate>? = null
+
+    fun isEnrolled(): Boolean =
+        keystoreManager.hasKey() && !keystoreManager.getClientCertificatePem().isNullOrBlank()
 
     fun getSecurityLevel(): HardwareSecurityLevel? =
         if (keystoreManager.hasKey()) {
@@ -47,7 +52,8 @@ class SecurityRepository(
      * 2. Mints hardware-backed EC keypair with attestation in StrongBox or TEE
      * 3. Constructs & hardware-signs PKCS#10 CSR
      * 4. Transmits CSR + Attestation chain to backend
-     * 5. Installs returned CA-signed certificate chain into AndroidKeyStore
+     * 5. Caches the returned CA-signed certificate chain in app storage
+     *    (the AndroidKeyStore cannot attach a chain to a hardware-backed key)
      */
     suspend fun enroll(forceStrongBox: Boolean = true): EnrollmentResult =
         withContext(Dispatchers.IO) {
@@ -86,9 +92,13 @@ class SecurityRepository(
             Log.d(TAG, "Submitting enrollment request to backend...")
             val enrollResponse = enrollmentApi.enroll(enrollRequest)
 
-            Log.d(TAG, "Installing returned certificate chain into KeyStore...")
+            Log.d(TAG, "Caching issued client certificate chain for mTLS...")
             val installedChain = parseCertificateChain(enrollResponse)
-            keystoreManager.installCertificateChain(installedChain)
+            cachedClientChain = installedChain.filterIsInstance<X509Certificate>().toTypedArray()
+            keystoreManager.saveClientCertificatePem(enrollResponse.clientCertificate)
+            keystoreManager.saveCaCertificatePem(
+                enrollResponse.caCertificate ?: enrollResponse.certificateChain?.lastOrNull(),
+            )
 
             EnrollmentResult(
                 securityLevel = keyGenResult.securityLevel,
@@ -98,19 +108,35 @@ class SecurityRepository(
 
     /**
      * Prepares the mTLS OkHttpClient and executes a protected ping call over mTLS 1.3
+     *
+     * The trust anchor for the backend's private CA is resolved from
+     * [caCertificatePemOrDer] (explicit override) or the CA PEM persisted at enrollment.
+     * The client certificate chain is served from app storage by the custom KeyManager.
      */
     suspend fun pingProtected(caCertificatePemOrDer: ByteArray? = null): ProtectedResponse =
         withContext(Dispatchers.IO) {
             val api =
                 protectedApi ?: run {
-                    val caStream = caCertificatePemOrDer?.let { ByteArrayInputStream(it) }
+                    val caBytes =
+                        caCertificatePemOrDer
+                            ?: keystoreManager.getCaCertificatePem()?.toByteArray(Charsets.UTF_8)
+                    val caStream = caBytes?.let { ByteArrayInputStream(it) }
                     val sslConfig =
-                        MtlsSocketFactoryBuilder(keystoreManager.getKeyStore(), keystoreManager.getKeyAlias())
-                            .build(caStream)
+                        MtlsSocketFactoryBuilder(
+                            keystoreManager.getKeyStore(),
+                            keystoreManager.getKeyAlias(),
+                            resolveClientChain(),
+                            logger = { msg -> Log.d(TLS_DIAG_TAG, msg) },
+                        ).build(caStream)
 
+                    val logging =
+                        HttpLoggingInterceptor().apply {
+                            level = HttpLoggingInterceptor.Level.BASIC
+                        }
                     val mtlsClient =
                         OkHttpClient
                             .Builder()
+                            .addInterceptor(logging)
                             .sslSocketFactory(sslConfig.sslSocketFactory, sslConfig.trustManager)
                             .build()
 
@@ -119,6 +145,33 @@ class SecurityRepository(
 
             api.ping()
         }
+
+    /**
+     * Returns the CA-signed client certificate chain from the enrollment cache, lazily
+     * restored from persisted PEM when the process was recreated. The chain is [leaf, ca].
+     */
+    private fun resolveClientChain(): Array<X509Certificate>? {
+        cachedClientChain?.let { return it }
+
+        val leafPem = keystoreManager.getClientCertificatePem() ?: return null
+        val caPem = keystoreManager.getCaCertificatePem()
+
+        val cf = CertificateFactory.getInstance("X.509")
+        val leaf =
+            cf.generateCertificate(ByteArrayInputStream(leafPem.toByteArray(Charsets.UTF_8)))
+                as X509Certificate
+        val chain =
+            if (caPem == null) {
+                arrayOf(leaf)
+            } else {
+                val ca =
+                    cf.generateCertificate(ByteArrayInputStream(caPem.toByteArray(Charsets.UTF_8)))
+                        as X509Certificate
+                arrayOf(leaf, ca)
+            }
+        cachedClientChain = chain
+        return chain
+    }
 
     private fun parseCertificateChain(response: EnrollResponse): List<Certificate> {
         val cf = CertificateFactory.getInstance("X.509")
@@ -158,5 +211,6 @@ class SecurityRepository(
 
     companion object {
         private const val TAG = "SecurityRepository"
+        private const val TLS_DIAG_TAG = "TLS-Client"
     }
 }

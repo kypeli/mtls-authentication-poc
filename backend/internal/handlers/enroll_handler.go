@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -70,9 +71,12 @@ func (h *EnrollHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var req EnrollRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[ENROLL] ❌ Invalid JSON body from %s: %v", r.RemoteAddr, err)
 		http.Error(w, fmt.Sprintf("Invalid JSON body: %v", err), http.StatusBadRequest)
 		return
 	}
+
+	log.Printf("[ENROLL] 📥 Received enrollment request for device_id=%q from %s", req.DeviceID, r.RemoteAddr)
 
 	if req.DeviceID == "" {
 		http.Error(w, "device_id is required", http.StatusBadRequest)
@@ -90,12 +94,14 @@ func (h *EnrollHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	csrDER, err := base64.StdEncoding.DecodeString(csrBase64)
 	if err != nil {
+		log.Printf("[ENROLL] ❌ Failed to decode base64 CSR for device_id=%q from %s: %v", req.DeviceID, r.RemoteAddr, err)
 		http.Error(w, "failed to decode base64 CSR", http.StatusBadRequest)
 		return
 	}
 
 	parsedCSR, err := x509.ParseCertificateRequest(csrDER)
 	if err != nil {
+		log.Printf("[ENROLL] ❌ Invalid CSR DER for device_id=%q from %s: %v", req.DeviceID, r.RemoteAddr, err)
 		http.Error(w, fmt.Sprintf("invalid CSR DER: %v", err), http.StatusBadRequest)
 		return
 	}
@@ -103,6 +109,7 @@ func (h *EnrollHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	policy := h.verifier.Policy()
 
 	if !policy.AllowEmptyAttestation && len(req.AttestationChain) < 2 {
+		log.Printf("[ENROLL] ❌ Attestation chain too short (%d certs) for device_id=%q", len(req.AttestationChain), req.DeviceID)
 		http.Error(w, "attestation_chain must contain at least leaf and intermediate certificates", http.StatusBadRequest)
 		return
 	}
@@ -111,6 +118,7 @@ func (h *EnrollHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for i, certB64 := range req.AttestationChain {
 		der, err := base64.StdEncoding.DecodeString(certB64)
 		if err != nil {
+			log.Printf("[ENROLL] ❌ Failed to decode cert at index %d for device_id=%q: %v", i, req.DeviceID, err)
 			http.Error(w, fmt.Sprintf("failed to decode certificate at index %d: %v", i, err), http.StatusBadRequest)
 			return
 		}
@@ -123,6 +131,7 @@ func (h *EnrollHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if challengeB64 != "" {
 		challengeBytes, err = base64.StdEncoding.DecodeString(challengeB64)
 		if err != nil {
+			log.Printf("[ENROLL] ❌ Invalid base64 challenge for device_id=%q: %v", req.DeviceID, err)
 			http.Error(w, "invalid base64 challenge in request", http.StatusBadRequest)
 			return
 		}
@@ -144,6 +153,7 @@ func (h *EnrollHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(challengeBytes) == 0 && !policy.AllowEmptyAttestation {
+		log.Printf("[ENROLL] ❌ Attestation challenge could not be located for device_id=%q", req.DeviceID)
 		http.Error(w, "attestation challenge could not be located", http.StatusBadRequest)
 		return
 	}
@@ -151,6 +161,7 @@ func (h *EnrollHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Verify and consume challenge from challenge store (single use) if a challenge was provided/located
 	if challengeB64 != "" {
 		if !h.store.VerifyAndConsumeChallenge(challengeB64) {
+			log.Printf("[ENROLL] ❌ Invalid or expired attestation challenge for device_id=%q", req.DeviceID)
 			http.Error(w, "invalid or expired attestation challenge", http.StatusBadRequest)
 			return
 		}
@@ -162,13 +173,18 @@ func (h *EnrollHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Perform Android Key Attestation verification
 	record, err := h.verifier.VerifyAttestation(chainDER, challengeBytes, parsedCSR.PublicKey)
 	if err != nil {
+		log.Printf("[ENROLL] ❌ Attestation verification failed for device_id=%q: %v", req.DeviceID, err)
 		http.Error(w, fmt.Sprintf("attestation verification failed: %v", err), http.StatusForbidden)
 		return
 	}
 
+	log.Printf("[ENROLL] 🛡️ Attestation verified for device_id=%q: HardwareSecurityLevel=%s",
+		req.DeviceID, record.AttestationSecurityLevel)
+
 	// Sign CSR via in-process CA
 	clientCert, clientPEM, err := h.ca.SignCSR(csrDER, req.DeviceID, h.clientCertTTL)
 	if err != nil {
+		log.Printf("[ENROLL] ❌ Failed to sign CSR for device_id=%q: %v", req.DeviceID, err)
 		http.Error(w, fmt.Sprintf("failed to sign CSR: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -187,6 +203,9 @@ func (h *EnrollHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		HardwareSecurityLevel: record.AttestationSecurityLevel.String(),
 	}
 	_ = h.deviceRepo.RegisterDevice(devRecord)
+
+	log.Printf("[ENROLL] 📜 Issued client certificate for device_id=%q: Serial=%s, TTL=%v",
+		req.DeviceID, clientCert.SerialNumber.String(), h.clientCertTTL)
 
 	clientPEMStr := string(clientPEM)
 	resp := EnrollResponse{

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -37,9 +38,13 @@ func (h *ChallengeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	challenge, expiresAt, err := h.store.GenerateAndStoreChallenge(h.ttl)
 	if err != nil {
+		log.Printf("[CHALLENGE] ❌ Failed to generate attestation challenge for %s: %v", r.RemoteAddr, err)
 		http.Error(w, "Failed to generate attestation challenge", http.StatusInternalServerError)
 		return
 	}
+
+	log.Printf("[CHALLENGE] 🎲 Issued challenge for %s: prefix=%s... (TTL: %v, ExpiresAt: %s)",
+		r.RemoteAddr, challenge[:min(len(challenge), 12)], h.ttl, expiresAt.UTC().Format(time.RFC3339))
 
 	resp := ChallengeResponse{
 		Challenge: challenge,

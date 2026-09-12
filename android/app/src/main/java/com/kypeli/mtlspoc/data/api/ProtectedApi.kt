@@ -10,25 +10,28 @@ import java.io.IOException
 
 class ProtectedApi(
     private val baseUrl: String,
-    private val mtlsClient: OkHttpClient
+    private val mtlsClient: OkHttpClient,
 ) {
     private val moshi = Moshi.Builder().build()
 
     private val protectedResponseAdapter = moshi.adapter(ProtectedResponse::class.java)
 
-    suspend fun ping(): ProtectedResponse = withContext(Dispatchers.IO) {
-        val request = Request.Builder()
-            .url("$baseUrl/api/v1/protected/ping")
-            .get()
-            .build()
+    suspend fun ping(): ProtectedResponse =
+        withContext(Dispatchers.IO) {
+            val request =
+                Request
+                    .Builder()
+                    .url("$baseUrl/api/v1/protected/ping")
+                    .get()
+                    .build()
 
-        mtlsClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                val errorBody = response.body?.string()
-                throw IOException("Protected ping failed: HTTP ${response.code} ${response.message}: $errorBody")
+            mtlsClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val errorBody = response.body.string()
+                    throw IOException("Protected ping failed: HTTP ${response.code} ${response.message}: $errorBody")
+                }
+                val body = response.body.string()
+                protectedResponseAdapter.fromJson(body) ?: throw IOException("Failed to parse ping response")
             }
-            val body = response.body?.string() ?: throw IOException("Empty response body")
-            protectedResponseAdapter.fromJson(body) ?: throw IOException("Failed to parse ping response")
         }
-    }
 }

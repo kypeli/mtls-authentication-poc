@@ -80,11 +80,7 @@ func main() {
 			"localhost",
 			"android.local",
 		},
-		IPAddresses: []net.IP{
-			net.ParseIP("127.0.0.1"),
-			net.ParseIP("10.0.2.2"), // Android emulator host alias
-			net.ParseIP("::1"),
-		},
+		IPAddresses:           getHostSANIPs(),
 		NotBefore:             time.Now().Add(-1 * time.Minute),
 		NotAfter:              time.Now().Add(5 * 365 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
@@ -128,4 +124,31 @@ func main() {
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+func getHostSANIPs() []net.IP {
+	ips := []net.IP{
+		net.ParseIP("127.0.0.1"),
+		net.ParseIP("10.0.2.2"), // Android emulator host alias
+		net.ParseIP("::1"),
+	}
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, addr := range addrs {
+				if ipNet, ok := addr.(*net.IPNet); ok {
+					if ip4 := ipNet.IP.To4(); ip4 != nil {
+						ips = append(ips, ip4)
+					}
+				}
+			}
+		}
+	}
+	return ips
 }

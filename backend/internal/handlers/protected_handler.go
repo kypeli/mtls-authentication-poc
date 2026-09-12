@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -34,9 +35,13 @@ func (h *ProtectedPingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 
 	identity, ok := middleware.GetDeviceIdentity(r.Context())
 	if !ok {
+		log.Printf("[PROTECTED-PING] ❌ Unauthorized ping from %s: missing device context", r.RemoteAddr)
 		http.Error(w, "Unauthorized: missing device context", http.StatusUnauthorized)
 		return
 	}
+
+	log.Printf("[PROTECTED-PING] 🏓 Ping from authenticated device %q (Serial=%s, RemoteAddr=%s)",
+		identity.DeviceID, identity.CertSerial, r.RemoteAddr)
 
 	resp := ProtectedResponse{
 		Status:         "ok",

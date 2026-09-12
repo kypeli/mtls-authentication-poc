@@ -6,6 +6,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
 import android.util.Log
+import dev.zacsweers.metro.Inject
 import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.KeyStore
@@ -14,6 +15,7 @@ import java.security.cert.Certificate
 import java.security.cert.X509Certificate
 import java.security.spec.ECGenParameterSpec
 
+@Inject
 class KeystoreManager(
     private val context: Context,
     private val keyAlias: String = DEFAULT_ALIAS,
@@ -22,6 +24,8 @@ class KeystoreManager(
         KeyStore.getInstance(ANDROID_KEYSTORE).apply {
             load(null)
         }
+
+    private val trustPrefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     /**
      * Generates a secp256r1 hardware keypair with an attestation challenge nonce.
@@ -80,7 +84,7 @@ class KeystoreManager(
                     keyAlias,
                     KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
                 ).setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-                .setDigests(KeyProperties.DIGEST_SHA256)
+                .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_NONE)
                 .setAttestationChallenge(challenge)
 
         if (isStrongBox) {
@@ -110,14 +114,30 @@ class KeystoreManager(
     fun getLeafCertificate(): X509Certificate? = keyStore.getCertificate(keyAlias) as? X509Certificate
 
     /**
-     * Installs the CA-signed certificate chain returned by the backend, linking it
-     * to the existing hardware-backed private key entry in the AndroidKeyStore.
+     * Persists the backend CA certificate (public data) returned at enrollment so the mTLS
+     * client can anchor server trust without depending on AndroidKeyStore chain ordering.
      */
-    fun installCertificateChain(certificates: List<Certificate>) {
-        val chainArray = certificates.toTypedArray()
-        keyStore.setKeyEntry(keyAlias, null, chainArray)
-        Log.i(TAG, "Successfully installed certificate chain of size ${chainArray.size} for alias $keyAlias")
+    fun saveCaCertificatePem(pem: String?) {
+        trustPrefs.edit().apply {
+            if (pem == null) remove(KEY_CA_PEM) else putString(KEY_CA_PEM, pem)
+        }.apply()
     }
+
+    fun getCaCertificatePem(): String? = trustPrefs.getString(KEY_CA_PEM, null)
+
+    /**
+     * Persists the CA-signed client leaf certificate (public data) returned at enrollment.
+     * The client cert chain is deliberately held by the app rather than installed into the
+     * AndroidKeyStore: on keystore2 (Android 12+/17), `setKeyEntry` cannot attach a chain to
+     * a hardware-backed key ("Operation not supported because key encoding is unknown").
+     */
+    fun saveClientCertificatePem(pem: String?) {
+        trustPrefs.edit().apply {
+            if (pem == null) remove(KEY_CLIENT_PEM) else putString(KEY_CLIENT_PEM, pem)
+        }.apply()
+    }
+
+    fun getClientCertificatePem(): String? = trustPrefs.getString(KEY_CLIENT_PEM, null)
 
     fun deleteKey() {
         if (keyStore.containsAlias(keyAlias)) {
@@ -137,6 +157,9 @@ class KeystoreManager(
 
     companion object {
         private const val TAG = "KeystoreManager"
+        private const val PREFS_NAME = "mtls_trust_store"
+        private const val KEY_CA_PEM = "backend_ca_pem"
+        private const val KEY_CLIENT_PEM = "client_cert_pem"
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val DEFAULT_ALIAS = "mtls_client_identity"
     }
