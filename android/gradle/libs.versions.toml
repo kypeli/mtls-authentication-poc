@@ -7,7 +7,8 @@ espressoCore = "3.7.0"
 lifecycleRuntimeKtx = "2.11.0"
 activityCompose = "1.13.0"
 kotlin = "2.4.10"
-ksp = "2.2.10-2.0.2"
+ksp = "2.3.12"
+metro = "1.4.2"
 composeBom = "2026.08.00"
 okhttp = "5.5.0"
 moshi = "1.15.2"
@@ -43,4 +44,5 @@ androidx-compose-material3 = { group = "androidx.compose.material3", name = "mat
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+metro = { id = "dev.zacsweers.metro", version.ref = "metro" }
 

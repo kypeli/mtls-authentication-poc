@@ -109,7 +109,7 @@ type Policy struct {
 	SkipChainValidation   bool // In dev mode, skips verifying the cert chain against Google's hardware root
 	AllowEmptyAttestation bool // In dev mode, allows enrollment without attestation cert chain
 	// ExpectedPackageName, when non-empty, requires the attestation application ID
-	// (tag 710) to list the given package, binding the key to this app only.
+	// (tag 709) to list the given package, binding the key to this app only.
 	ExpectedPackageName string
 	// MinOsVersion, when > 0, requires the attested OS version (tag 705, MMmmnn
 	// format, e.g. 140000 for Android 14.0.0) to be at least this value.

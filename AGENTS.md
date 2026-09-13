@@ -48,7 +48,7 @@ mtls-poc/
 │   │   └── src/
 │   │       ├── main/
 │   │       │   ├── java/com/kypeli/mtlspoc/
-│   │       │   │   ├── MainActivity.kt        # Compose Activity (wired to MainView)
+│   │   │   │   ├── MainActivity.kt        # Compose Activity (MainView + SDK 37 local-network permission gate)
 │   │       │   │   ├── MtlsApplication.kt     # Application + Metro DI graph bootstrap
 │   │       │   │   ├── data/
 │   │       │   │   │   ├── api/
@@ -73,11 +73,12 @@ mtls-poc/
 │   │       │   │       ├── MainView.kt                # Compose UI
 │   │       │   │       ├── MainViewModel.kt           # StateFlow-driven presentation logic
 │   │       │   │       └── UiState.kt                 # UI state hierarchy
-│   │       │   └── AndroidManifest.xml        # INTERNET permission
+│   │       │   └── AndroidManifest.xml        # INTERNET + ACCESS_LOCAL_NETWORK permissions
 │   │       └── test/
 │   │           └── java/com/kypeli/mtlspoc/
 │   │               ├── CsrGeneratorTest.kt            # Validates CSR ASN.1 & signature
-│   │               └── MtlsSocketFactoryBuilderTest.kt# Validates SSLContext, KeyManager & full TLS 1.3 handshake
+│   │               ├── MtlsSocketFactoryBuilderTest.kt# Validates SSLContext, KeyManager & full TLS 1.3 handshake
+│   │               └── ExampleUnitTest.kt             # Template boilerplate (safe to delete)
 │   └── gradle/libs.versions.toml              # Centralized dependencies catalog
 └── backend/                                   # Go backend service (fully implemented)
     ├── cmd/server/                            # Dual-listener HTTPS (enroll) + mTLS 1.3 (protected) server
@@ -98,10 +99,11 @@ mtls-poc/
 - **Gradle Version Catalog**: All dependencies must be declared in [libs.versions.toml](file:///Users/kypeli/src/own/mtls-poc/android/gradle/libs.versions.toml).
 - Never hardcode dependency coordinates or versions inside `build.gradle.kts`.
 - Current core library stacks:
-  - **Networking**: OkHttp 5.5.0 + Moshi Kotlin 1.15.2
+  - **Networking**: OkHttp 5.5.0 + Moshi 1.15.2 (with `moshi-kotlin-codegen`)
   - **Cryptography**: Bouncy Castle `bcpkix-jdk18on` 1.85 + `bcprov-jdk18on` 1.85.2
   - **UI**: Jetpack Compose BOM `2026.08.00`, Material 3
   - **Concurrency**: Kotlinx Coroutines 1.11.0
+  - **DI**: Metro 1.4.2
 
 ---
 
@@ -122,6 +124,18 @@ cd android
 ./gradlew assembleDebug
 ```
 
+### Backend Tests
+```bash
+cd backend
+make test
+```
+
+### Backend Build Check
+```bash
+cd backend
+make build
+```
+
 ---
 
 ## 📋 Outstanding Agent Tasks
@@ -140,12 +154,13 @@ The security review remediation (2026-09) addressed server-derived identity bind
 - **Features**:
   - Dual listeners: `:8080` (HTTPS Standard TLS Enrollment & Challenge) and `:8443` (Strict Mutual TLS 1.3).
   - Google Hardware Attestation Root CA trust pool & OID `1.3.6.1.4.1.11129.2.1.17` ASN.1 parser.
-  - Attestation policy hardening: revocation status list client, application ID binding (tag 710), OS version/patch tags (705/706), hardware-backed root-of-trust enforcement.
+  - Attestation policy hardening: revocation status list client, application ID binding (tag 709), OS version/patch tags (705/706), hardware-backed root-of-trust enforcement.
   - Server-derived device identity: identity = SHA-256 of the attested public key; client-supplied `device_id` is a validated display label only.
   - mTLS middleware binding: certificate key fingerprint, current serial, and revoked-serial/identity checks against the registry.
   - In-process ECDSA P-256 Certificate Authority with PKCS#10 CSR validation and client certificate signing.
   - Ephemeral challenge store (single-use, one-minute default TTL) and identity-keyed device registry.
   - Shared certificate bootstrap (`internal/ca/bootstrap.go`) used by both the server and `certgen`; refuses to overwrite a partial certificate set.
+  - `make certgen` regenerates certificates with `-force` and syncs the Root CA to `android/app/src/debug/res/raw/debug_ca.crt`.
   - Test suite with 100% pass rate (`make test`), including middleware, config, revocation, and identity-binding coverage.
 
 ### Android Client (`android/`)

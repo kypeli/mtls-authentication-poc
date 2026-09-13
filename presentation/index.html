@@ -1,0 +1,812 @@
+<title>Hardware-Bound Device Identity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ground:      #e9ecf0;
+    --sheet:       #ffffff;
+    --sheet-sunk:  #f2f4f7;
+    --ink:         #131820;
+    --ink-2:       #4c5764;
+    --ink-3:       #79838f;
+    --rule:        #ccd3db;
+    --rule-soft:   #e2e7ec;
+    --accent:      #a05a07;
+    --accent-ink:  #7d4605;
+    --accent-wash: #f7e9d5;
+    --sig:         #146b64;
+    --sig-wash:    #dcefec;
+    --warn:        #8f2f26;
+    --shadow:      0 1px 2px rgba(19, 24, 32, .06), 0 12px 32px -20px rgba(19, 24, 32, .35);
+
+    --display: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
+    --body:    "IBM Plex Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono:    "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0b0f14;
+      --sheet:       #131a22;
+      --sheet-sunk:  #18212b;
+      --ink:         #e4e9ef;
+      --ink-2:       #9aa5b3;
+      --ink-3:       #6e7987;
+      --rule:        #2a343f;
+      --rule-soft:   #212a34;
+      --accent:      #e8a355;
+      --accent-ink:  #f0b878;
+      --accent-wash: #33240f;
+      --sig:         #54c4b6;
+      --sig-wash:    #0f2d2b;
+      --warn:        #e08579;
+      --shadow:      0 1px 2px rgba(0, 0, 0, .5), 0 14px 34px -22px rgba(0, 0, 0, .9);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #0b0f14;
+    --sheet:       #131a22;
+    --sheet-sunk:  #18212b;
+    --ink:         #e4e9ef;
+    --ink-2:       #9aa5b3;
+    --ink-3:       #6e7987;
+    --rule:        #2a343f;
+    --rule-soft:   #212a34;
+    --accent:      #e8a355;
+    --accent-ink:  #f0b878;
+    --accent-wash: #33240f;
+    --sig:         #54c4b6;
+    --sig-wash:    #0f2d2b;
+    --warn:        #e08579;
+    --shadow:      0 1px 2px rgba(0, 0, 0, .5), 0 14px 34px -22px rgba(0, 0, 0, .9);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .deck {
+    max-width: 1140px;
+    margin: 0 auto;
+    padding-inline: 20px;
+    padding-block: 36px 64px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  .sheet {
+    background: var(--sheet);
+    border: 1px solid var(--rule);
+    box-shadow: var(--shadow);
+    padding-inline: clamp(20px, 4vw, 56px);
+    padding-block: clamp(26px, 3.4vw, 46px) clamp(28px, 3.6vw, 52px);
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
+  }
+
+  /* ---------- sheet header ---------- */
+  .sheet-head {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: baseline;
+    gap: 16px;
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 12px;
+  }
+  .folio {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .1em;
+    color: var(--accent);
+  }
+  .sheet-head h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    margin: 0;
+    color: var(--ink-2);
+  }
+
+  /* ---------- typography ---------- */
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0;
+  }
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(34px, 5.4vw, 58px);
+    line-height: 1.02;
+    letter-spacing: -.015em;
+    text-wrap: balance;
+    margin: 10px 0 0;
+  }
+  h1 em {
+    font-style: normal;
+    color: var(--accent);
+  }
+  h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 12.5px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 14px;
+  }
+  .lede {
+    font-size: 18px;
+    line-height: 1.55;
+    color: var(--ink-2);
+    max-width: 62ch;
+    margin: 18px 0 0;
+    text-wrap: pretty;
+  }
+  .lede strong { color: var(--ink); font-weight: 600; }
+  p { text-wrap: pretty; }
+  code, .mono { font-family: var(--mono); font-size: .88em; }
+  code { color: var(--accent-ink); white-space: nowrap; }
+
+  /* ---------- page 1 ---------- */
+  .claims {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+    gap: 0;
+    border-top: 1px solid var(--rule);
+  }
+  .claim {
+    border-bottom: 1px solid var(--rule);
+    border-right: 1px solid var(--rule-soft);
+    padding: 18px 22px 20px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .claim:last-child { border-right: none; }
+  .claim + .claim { padding-left: 22px; }
+  .claim b {
+    font-family: var(--display);
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: .01em;
+  }
+  .claim span { font-size: 13.5px; color: var(--ink-2); line-height: 1.5; }
+
+  .swap { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+  .swap > div { background: var(--sheet); padding: 20px 22px 22px; }
+  .swap .then { background: var(--sheet-sunk); }
+  .swap h4 {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    margin: 0 0 12px;
+    color: var(--ink-3);
+  }
+  .swap .now h4 { color: var(--accent); }
+  .swap ul { margin: 0; padding-left: 17px; display: flex; flex-direction: column; gap: 7px; }
+  .swap li { font-size: 13.5px; color: var(--ink-2); }
+  .swap .then li::marker { color: var(--warn); }
+  .swap .now li::marker { color: var(--sig); }
+
+  .status {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 8px;
+    align-items: center;
+  }
+  .chip {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: .02em;
+    padding: 5px 11px;
+    border: 1px solid var(--rule);
+    background: var(--sheet-sunk);
+    color: var(--ink-2);
+    white-space: nowrap;
+  }
+  .chip.on { border-color: var(--sig); background: var(--sig-wash); color: var(--sig); }
+
+  /* ---------- diagram ---------- */
+  figure { margin: 0; }
+  .figwrap { overflow-x: auto; }
+  svg.diagram { display: block; width: 100%; min-width: 720px; height: auto; color: var(--ink-2); }
+  .d-box { fill: none; stroke: var(--rule); stroke-width: 1.4; }
+  .d-frame { fill: none; stroke: var(--ink-3); stroke-width: 1.4; }
+  .d-fill { fill: var(--sheet-sunk); stroke: var(--rule); stroke-width: 1.2; }
+  .d-enclave { fill: var(--sig-wash); stroke: var(--sig); stroke-width: 1.6; stroke-dasharray: 6 4; }
+  .d-line { stroke: currentColor; stroke-width: 1.4; fill: none; }
+  .d-hot { stroke: var(--accent); stroke-width: 1.8; fill: none; }
+  .d-hot-head { fill: var(--accent); }
+  .t { font-family: var(--body); font-size: 12.5px; fill: var(--ink); }
+  .t-s { font-family: var(--body); font-size: 11.5px; fill: var(--ink-2); }
+  .t-m { font-family: var(--mono); font-size: 11px; fill: var(--ink-2); }
+  .t-cap { font-family: var(--mono); font-size: 10.5px; letter-spacing: .13em; fill: var(--ink-3); }
+  .t-sig { fill: var(--sig); }
+  .t-hot { fill: var(--accent); }
+  figcaption { font-size: 13px; color: var(--ink-3); margin-top: 14px; max-width: 70ch; }
+
+  /* ---------- protocol steps ---------- */
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1px; background: var(--rule-soft); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+  .step { background: var(--sheet); padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 5px; }
+  .step .n { font-family: var(--mono); font-size: 11px; color: var(--accent); letter-spacing: .1em; }
+  .step b { font-family: var(--display); font-size: 15.5px; font-weight: 600; }
+  .step span { font-size: 12.8px; color: var(--ink-2); line-height: 1.48; }
+
+  /* ---------- page 3 ---------- */
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 0 44px; }
+  .split > section { display: flex; flex-direction: column; }
+  .col-head {
+    border-top: 2px solid var(--accent);
+    padding-top: 12px;
+    margin-bottom: 20px;
+  }
+  .col-head b { font-family: var(--display); font-size: 22px; font-weight: 700; letter-spacing: -.01em; display: block; }
+  .col-head span { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+
+  .detail { display: flex; flex-direction: column; gap: 18px; }
+  .detail > div { display: flex; flex-direction: column; gap: 4px; }
+  .detail dt, .detail .k {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: .04em;
+    color: var(--sig);
+  }
+  .detail .v { font-size: 13.6px; color: var(--ink-2); line-height: 1.5; }
+  .detail .v b { color: var(--ink); font-weight: 600; }
+
+  .notes {
+    border-top: 1px solid var(--rule);
+    padding-top: 20px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 22px 40px;
+  }
+  .note b { font-family: var(--display); font-size: 14px; font-weight: 600; letter-spacing: .01em; display: block; margin-bottom: 4px; }
+  .note span { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+  .note.gap b { color: var(--warn); }
+
+  /* ---------- page 4 ---------- */
+  .h-sec {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(26px, 3.4vw, 38px);
+    line-height: 1.08;
+    letter-spacing: -.012em;
+    text-wrap: balance;
+    margin: 10px 0 0;
+    max-width: 22ch;
+  }
+  .h-sec em { font-style: normal; color: var(--accent); }
+
+  .matrixwrap { overflow-x: auto; }
+  .matrix {
+    width: 100%;
+    min-width: 620px;
+    border-collapse: collapse;
+    font-size: 13.4px;
+  }
+  .matrix caption {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 12.5px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    text-align: left;
+    padding-bottom: 12px;
+  }
+  .matrix th {
+    font-family: var(--mono);
+    font-weight: 400;
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    text-align: left;
+    padding: 0 16px 9px 0;
+    border-bottom: 1px solid var(--ink);
+  }
+  .matrix td {
+    padding: 13px 16px 14px 0;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+    color: var(--ink-2);
+    line-height: 1.48;
+  }
+  .matrix td:first-child { color: var(--ink); font-weight: 500; width: 27%; }
+  .matrix td:last-child, .matrix th:last-child { padding-right: 0; width: 116px; }
+  .matrix tr:last-child td { border-bottom: 1px solid var(--rule); }
+
+  .verdict {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    white-space: nowrap;
+  }
+  .verdict.eq   { color: var(--sig);  border: 1px solid var(--sig); background: var(--sig-wash); }
+  .verdict.part { color: var(--ink-2); border: 1px dashed var(--ink-3); }
+  .verdict.none { color: var(--warn); border: 1px solid var(--warn); }
+
+  .notes-2 { grid-template-columns: repeat(2, 1fr); }
+  .notes-2 code { white-space: normal; overflow-wrap: anywhere; }
+
+  @media (max-width: 760px) {
+    .swap, .split, .notes-2 { grid-template-columns: 1fr; }
+    .split > section + section { margin-top: 34px; }
+    .claim { border-right: none; padding-left: 0 !important; padding-right: 0; }
+  }
+
+  @media print {
+    body { background: #fff; }
+    .deck { padding: 0; gap: 0; max-width: none; }
+    .sheet { break-after: page; border: none; box-shadow: none; }
+    .sheet:last-child { break-after: auto; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="deck">
+
+<!-- ============================ 01 ============================ -->
+<section class="sheet">
+  <div class="sheet-head">
+    <span class="folio">01 / 04</span>
+    <h2>Overview</h2>
+  </div>
+
+  <header>
+    <p class="eyebrow">Proof of concept · Android device identity</p>
+    <h1>A client credential that <em>cannot be copied</em> off the device.</h1>
+    <p class="lede">
+      The PoC replaces bearer tokens and file-stored client certificates with an EC&nbsp;P-256 key minted
+      inside the device's <strong>StrongBox HSM or TrustZone TEE</strong>, marked non-exportable. The private key
+      never enters app memory. The backend issues an X.509 client certificate only after it has verified,
+      against Google's hardware attestation roots, that the key really was minted in genuine secure hardware
+      on a verified-boot, locked device — and then authenticates every request with that certificate over
+      mutual TLS&nbsp;1.3.
+    </p>
+  </header>
+
+  <div class="claims">
+    <div class="claim">
+      <b>Non-exportable key</b>
+      <span>Root, a memory dump, or a Frida hook yields no key material. Signing happens inside the enclave.</span>
+    </div>
+    <div class="claim">
+      <b>Proven provenance</b>
+      <span>The attestation chain proves hardware backing, app binding, boot state and patch level — before any certificate is issued.</span>
+    </div>
+    <div class="claim">
+      <b>Server-owned identity</b>
+      <span>Identity is derived server-side as SHA-256 of the attested public key. A client cannot name itself.</span>
+    </div>
+    <div class="claim">
+      <b>Credential in the handshake</b>
+      <span>Authentication is the TLS handshake itself. No token to replay, intercept, or forward.</span>
+    </div>
+  </div>
+
+  <div class="swap">
+    <div class="then">
+      <h4>What it removes</h4>
+      <ul>
+        <li>Bearer tokens replayable from any host once exfiltrated</li>
+        <li>Client certificates and keys sitting in app-private files</li>
+        <li>Client-asserted device IDs that are trusted as identity</li>
+        <li>Enrollment that cannot distinguish a real handset from an emulator or a script</li>
+      </ul>
+    </div>
+    <div class="now">
+      <h4>What replaces it</h4>
+      <ul>
+        <li>Hardware-bound key, signature-only, no export path</li>
+        <li>Short-lived CA-issued certificate, 7-day TTL, rotatable</li>
+        <li>Identity = hash of the attested key, bound at issuance and re-checked per request</li>
+        <li>Attestation policy: hardware backing, verified boot, locked bootloader, app package, OS patch level, Google revocation list</li>
+      </ul>
+    </div>
+  </div>
+
+  <div>
+    <h3>Status — end to end on real hardware</h3>
+    <div class="status">
+      <span class="chip on">✓ Physical device, Android 17</span>
+      <span class="chip on">✓ StrongBox with TEE fallback</span>
+      <span class="chip on">✓ Live attestation chain verified</span>
+      <span class="chip on">✓ mTLS 1.3 handshake, hardware-signed</span>
+      <span class="chip">27 backend tests · 6 client tests</span>
+      <span class="chip">minSdk 29 · targetSdk 37</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ 02 ============================ -->
+<section class="sheet">
+  <div class="sheet-head">
+    <span class="folio">02 / 04</span>
+    <h2>Architecture</h2>
+  </div>
+
+  <figure>
+    <div class="figwrap">
+      <svg class="diagram" viewBox="0 0 980 530" role="img"
+           aria-label="An Android device holds the app process above a hardware enclave that mints and uses a non-exportable key. The device enrolls over a server-authenticated TLS port, receives a CA-issued certificate, and then reaches the protected resource over a separate mutual TLS 1.3 port.">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path>
+          </marker>
+          <marker id="ar-hot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path class="d-hot-head" d="M 0 0 L 10 5 L 0 10 z"></path>
+          </marker>
+        </defs>
+
+        <!-- ===== device ===== -->
+        <rect class="d-frame" x="20" y="34" width="330" height="456" rx="3"></rect>
+        <text class="t-cap" x="36" y="24">ANDROID DEVICE</text>
+
+        <rect class="d-box" x="36" y="56" width="298" height="170" rx="2"></rect>
+        <text class="t-m" x="50" y="78">app process</text>
+        <rect class="d-fill" x="50" y="90" width="270" height="36" rx="2"></rect>
+        <text class="t" x="64" y="113">SecurityRepository</text>
+        <rect class="d-fill" x="50" y="134" width="270" height="36" rx="2"></rect>
+        <text class="t" x="64" y="157">CsrGenerator</text>
+        <rect class="d-fill" x="50" y="178" width="270" height="36" rx="2"></rect>
+        <text class="t" x="64" y="201">X509ExtendedKeyManager</text>
+
+        <!-- enclave link arrows -->
+        <line class="d-line" x1="112" y1="252" x2="112" y2="296" marker-end="url(#ar)"></line>
+        <text class="t-s" x="112" y="244" text-anchor="middle">sign request</text>
+        <line class="d-line" x1="258" y1="296" x2="258" y2="252" marker-end="url(#ar)"></line>
+        <text class="t-s" x="258" y="244" text-anchor="middle">signature only</text>
+
+        <!-- enclave -->
+        <rect class="d-enclave" x="36" y="300" width="298" height="174" rx="3"></rect>
+        <text class="t-cap t-sig" x="52" y="326">HARDWARE ENCLAVE</text>
+        <text class="t-m t-sig" x="52" y="344">StrongBox HSM · TrustZone TEE</text>
+        <text class="t-s" x="52" y="378">EC secp256r1 · PURPOSE_SIGN</text>
+        <text class="t-s" x="52" y="400">private key non-exportable</text>
+        <text class="t-s" x="52" y="422">attestation challenge embedded at keygen</text>
+        <text class="t-s" x="52" y="444">Google-signed attestation chain emitted</text>
+
+        <!-- ===== backend ===== -->
+        <rect class="d-frame" x="640" y="34" width="320" height="456" rx="3"></rect>
+        <text class="t-cap" x="656" y="24">BACKEND SERVICE</text>
+
+        <rect class="d-box" x="656" y="56" width="288" height="212" rx="2"></rect>
+        <text class="t-m t-hot" x="670" y="78">:8080  enrollment · server-auth TLS</text>
+        <rect class="d-fill" x="670" y="90" width="260" height="34" rx="2"></rect>
+        <text class="t" x="684" y="112">Challenge store · 60 s TTL</text>
+        <rect class="d-fill" x="670" y="132" width="260" height="34" rx="2"></rect>
+        <text class="t" x="684" y="154">Attestation verifier</text>
+        <rect class="d-fill" x="670" y="174" width="260" height="34" rx="2"></rect>
+        <text class="t" x="684" y="196">Device CA · ECDSA P-256</text>
+        <rect class="d-fill" x="670" y="216" width="260" height="34" rx="2"></rect>
+        <text class="t" x="684" y="238">Device registry</text>
+
+        <rect class="d-box" x="656" y="300" width="288" height="174" rx="2"></rect>
+        <text class="t-m t-hot" x="670" y="322">:8443  protected · mTLS 1.3 only</text>
+        <rect class="d-fill" x="670" y="334" width="260" height="34" rx="2"></rect>
+        <text class="t" x="684" y="356">RequireAndVerifyClientCert</text>
+        <rect class="d-fill" x="670" y="376" width="260" height="34" rx="2"></rect>
+        <text class="t" x="684" y="398">Identity + serial binding</text>
+        <rect class="d-fill" x="670" y="418" width="260" height="34" rx="2"></rect>
+        <text class="t" x="684" y="440">GET /api/v1/protected/ping</text>
+
+        <!-- ===== flows ===== -->
+        <line class="d-line" x1="350" y1="96" x2="654" y2="96" marker-end="url(#ar)"></line>
+        <text class="t-s" x="502" y="88" text-anchor="middle">1 · request challenge</text>
+
+        <line class="d-line" x1="654" y1="136" x2="350" y2="136" marker-end="url(#ar)"></line>
+        <text class="t-s" x="502" y="128" text-anchor="middle">2 · random nonce, single use</text>
+
+        <line class="d-line" x1="350" y1="192" x2="654" y2="192" marker-end="url(#ar)"></line>
+        <text class="t-s" x="502" y="184" text-anchor="middle">3 · CSR + attestation chain</text>
+
+        <line class="d-line" x1="654" y1="248" x2="350" y2="248" marker-end="url(#ar)"></line>
+        <text class="t-s" x="502" y="226" text-anchor="middle">4 · X.509 client certificate</text>
+        <text class="t-m" x="502" y="242" text-anchor="middle">CN = SHA-256(attested key)</text>
+
+        <line class="d-hot" x1="350" y1="392" x2="654" y2="392" marker-end="url(#ar-hot)"></line>
+        <text class="t-s t-hot" x="502" y="370" text-anchor="middle">5 · mutual TLS 1.3 handshake</text>
+        <text class="t-m t-hot" x="502" y="386" text-anchor="middle">CertificateVerify signed in enclave</text>
+
+        <text class="t-cap" x="502" y="510" text-anchor="middle">TWO LISTENERS · SEPARATE TRUST MODELS</text>
+      </svg>
+    </div>
+    <figcaption>
+      Enrollment and access are deliberately separate listeners. Port 8080 is ordinary server-authenticated
+      TLS, because a device has no credential yet; port 8443 refuses any connection that does not present a
+      CA-issued client certificate. Nothing crosses the enclave boundary except signatures and public keys.
+    </figcaption>
+  </figure>
+
+  <div class="steps">
+    <div class="step">
+      <span class="n">01</span>
+      <b>Challenge</b>
+      <span>The device fetches a random nonce, valid 60 s, single use.</span>
+    </div>
+    <div class="step">
+      <span class="n">02</span>
+      <b>Keygen</b>
+      <span>A fresh EC key is minted in the enclave with the nonce embedded in its attestation extension.</span>
+    </div>
+    <div class="step">
+      <span class="n">03</span>
+      <b>CSR</b>
+      <span>A PKCS#10 request is assembled in the app and signed by the enclave.</span>
+    </div>
+    <div class="step">
+      <span class="n">04</span>
+      <b>Attest &amp; issue</b>
+      <span>The server validates the chain and policy, derives identity from the attested key, and signs the certificate.</span>
+    </div>
+    <div class="step">
+      <span class="n">05</span>
+      <b>Access</b>
+      <span>Every protected call is a mutual TLS 1.3 handshake the enclave signs live.</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ 03 ============================ -->
+<section class="sheet">
+  <div class="sheet-head">
+    <span class="folio">03 / 04</span>
+    <h2>Implementation</h2>
+  </div>
+
+  <div class="split">
+    <section>
+      <div class="col-head">
+        <span>Android client</span>
+        <b>On the device</b>
+      </div>
+      <div class="detail">
+        <div>
+          <span class="k">KeystoreManager</span>
+          <span class="v">Generates <b>EC secp256r1</b> under <code>PURPOSE_SIGN</code> with <code>setIsStrongBoxBacked(true)</code>, falling back to TEE when StrongBox is absent — detected by walking the whole cause chain, since vendors wrap <code>StrongBoxUnavailableException</code>. The server nonce goes in via <code>setAttestationChallenge()</code>.</span>
+        </div>
+        <div>
+          <span class="k">Alternating key slots</span>
+          <span class="v">A new key is minted into the <b>inactive</b> of two alias slots and promoted only after the server accepts enrollment. A failed or interrupted enrollment never destroys a working identity.</span>
+        </div>
+        <div>
+          <span class="k">CsrGenerator + signer</span>
+          <span class="v">A Bouncy Castle <code>ContentSigner</code> bridges to <code>SHA256withECDSA</code> over the keystore handle, so the PKCS#10 request is <b>signed inside the enclave</b> with no key material in app memory.</span>
+        </div>
+        <div>
+          <span class="k">mTLS client</span>
+          <span class="v">A custom <code>X509ExtendedKeyManager</code> supplies the hardware key handle and the issued chain during the handshake; the OkHttp client is pinned to <b>TLS 1.3 only</b> and anchored on the CA returned at enrollment.</span>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="col-head">
+        <span>Backend service</span>
+        <b>On the server</b>
+      </div>
+      <div class="detail">
+        <div>
+          <span class="k">Attestation verifier</span>
+          <span class="v">Parses the Key Description extension <code>1.3.6.1.4.1.11129.2.1.17</code> and chains the leaf to <b>Google's hardware attestation roots</b>. The nonce is read from the extension, never from the request body, and must match an unconsumed challenge.</span>
+        </div>
+        <div>
+          <span class="k">Policy, enforced strictly</span>
+          <span class="v">Hardware-backed security level (TEE or StrongBox), <b>verified boot</b> and <b>locked bootloader</b> from the TEE-enforced root of trust (tag 704), app package binding (709), minimum OS version and patch level (705/706), and Google's <b>revocation status list</b> — fail-closed. The CSR public key must equal the attested leaf key.</span>
+        </div>
+        <div>
+          <span class="k">Identity derivation</span>
+          <span class="v">Identity is <b>SHA-256 of the attested SubjectPublicKeyInfo</b>, computed server-side and written into the certificate CN. The client-supplied <code>device_id</code> is a validated display label with no authority. Re-enrolling a revoked key is refused.</span>
+        </div>
+        <div>
+          <span class="k">Request-time binding</span>
+          <span class="v">A verified handshake is not sufficient. Middleware re-checks that the presented certificate's <b>key fingerprint equals its CN</b>, that the serial is the currently issued one for that identity, and that neither identity nor serial is revoked — so a superseded certificate stops working immediately.</span>
+        </div>
+        <div>
+          <span class="k">Issuance &amp; listeners</span>
+          <span class="v">An in-process <b>ECDSA P-256 CA</b> signs 7-day client certificates. If the registry write fails, the just-issued serial is revoked so no untracked certificate circulates. Enrollment and protected traffic run as two listeners with independent TLS configuration.</span>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="notes">
+    <div class="note gap">
+      <b>Not yet production</b>
+      <span>The device registry and challenge store are in-memory, and the CA key lives in the service process. Both want durable storage and a real CA or HSM-held signing key.</span>
+    </div>
+    <div class="note gap">
+      <b>Trust on first use</b>
+      <span>The mTLS trust anchor is adopted from the enrollment response. Safe because enrollment itself is anchored to system CAs in release builds, but a pinned anchor is stronger.</span>
+    </div>
+    <div class="note">
+      <b>Renewal path exists</b>
+      <span>Slot alternation plus serial binding already gives clean rotation: enroll again, the new serial becomes current, the old one is rejected on the next request.</span>
+    </div>
+    <div class="note">
+      <b>Verified by tests</b>
+      <span>27 backend tests including a full loopback TLS 1.3 handshake and a regression fixture captured from a real device attestation; 6 client tests covering CSR generation and SSL context assembly.</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ 04 ============================ -->
+<section class="sheet">
+  <div class="sheet-head">
+    <span class="folio">04 / 04</span>
+    <h2>iOS — beyond the PoC</h2>
+  </div>
+
+  <header>
+    <p class="eyebrow">Platform assessment · not implemented</p>
+    <p class="h-sec">Yes — but the attested key and the certificate key are <em>two different keys</em>.</p>
+    <p class="lede">
+      Every current iPhone has a <strong>Secure Enclave</strong>, and a key generated in it is as
+      non-exportable as a StrongBox key — that half maps across cleanly, with no hardware fallback branch
+      to write. What iOS has no public API for is <strong>attesting an arbitrary Secure Enclave key</strong>;
+      WWDC 2026 confirmed that is still the case. <strong>App Attest</strong> attests its own key and,
+      through it, the app instance. So the identity key that carries the client certificate earns its
+      trust indirectly: App Attest signs an assertion over the CSR.
+    </p>
+  </header>
+
+  <figure>
+    <div class="figwrap">
+      <svg class="diagram" viewBox="0 0 920 280" role="img"
+           aria-label="Inside the Secure Enclave, an App Attest key produces an Apple-rooted attestation and also signs an assertion binding the server challenge to a CSR; a separate identity key signs that CSR. The backend verifies the chain and the assertion, then issues the certificate.">
+        <defs>
+          <marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path>
+          </marker>
+          <marker id="ar4-hot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path class="d-hot-head" d="M 0 0 L 10 5 L 0 10 z"></path>
+          </marker>
+        </defs>
+
+        <!-- enclave -->
+        <text class="t-cap t-sig" x="46" y="48">SECURE ENCLAVE</text>
+        <rect class="d-enclave" x="30" y="56" width="212" height="200" rx="3"></rect>
+        <rect class="d-fill" x="46" y="76" width="180" height="46" rx="2"></rect>
+        <text class="t" x="60" y="104">App Attest key</text>
+        <rect class="d-fill" x="46" y="190" width="180" height="46" rx="2"></rect>
+        <text class="t" x="60" y="218">Identity key · P-256</text>
+
+        <!-- middle artefacts -->
+        <rect class="d-box" x="400" y="76" width="200" height="46" rx="2"></rect>
+        <text class="t" x="414" y="104">Apple-rooted attestation</text>
+        <rect class="d-box" x="400" y="190" width="200" height="46" rx="2"></rect>
+        <text class="t" x="414" y="218">PKCS#10 CSR</text>
+
+        <!-- backend -->
+        <text class="t-cap" x="700" y="48">BACKEND</text>
+        <rect class="d-frame" x="700" y="56" width="190" height="200" rx="3"></rect>
+        <rect class="d-fill" x="714" y="76" width="162" height="40" rx="2"></rect>
+        <text class="t" x="726" y="101">Verify Apple chain</text>
+        <rect class="d-fill" x="714" y="132" width="162" height="40" rx="2"></rect>
+        <text class="t" x="726" y="157">Verify assertion</text>
+        <rect class="d-fill" x="714" y="196" width="162" height="40" rx="2"></rect>
+        <text class="t" x="726" y="221">Issue certificate</text>
+
+        <!-- flows -->
+        <line class="d-line" x1="228" y1="99" x2="396" y2="99" marker-end="url(#ar4)"></line>
+        <text class="t-s" x="312" y="91" text-anchor="middle">Apple attests this key</text>
+
+        <line class="d-line" x1="228" y1="213" x2="396" y2="213" marker-end="url(#ar4)"></line>
+        <text class="t-s" x="312" y="205" text-anchor="middle">signs the CSR</text>
+
+        <polyline class="d-hot" points="136,122 136,158 500,158 500,186" marker-end="url(#ar4-hot)"></polyline>
+        <text class="t-s t-hot" x="330" y="150" text-anchor="middle">assertion binds challenge + CSR</text>
+
+        <line class="d-line" x1="602" y1="99" x2="696" y2="99" marker-end="url(#ar4)"></line>
+        <text class="t-m" x="649" y="91" text-anchor="middle">chain</text>
+
+        <line class="d-line" x1="602" y1="213" x2="696" y2="213" marker-end="url(#ar4)"></line>
+        <text class="t-m" x="649" y="205" text-anchor="middle">CSR</text>
+      </svg>
+    </div>
+    <figcaption>
+      Android needs one key: it attests itself and carries the certificate. iOS needs two, and the
+      amber edge is what holds them together — an App Attest assertion over the server challenge and the
+      CSR, so the backend learns that a genuine, unmodified app instance vouches for this specific key.
+    </figcaption>
+  </figure>
+
+  <div class="matrixwrap">
+    <table class="matrix">
+      <caption>Control-by-control, Android against iOS</caption>
+      <thead>
+        <tr>
+          <th scope="col">Android control</th>
+          <th scope="col">iOS equivalent</th>
+          <th scope="col">Verdict</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Non-exportable hardware key</td>
+          <td>Secure Enclave via <code>kSecAttrTokenIDSecureEnclave</code>, P-256 only, gated by <code>SecAccessControl</code>. Universal on current hardware — no StrongBox-or-TEE branch to write.</td>
+          <td><span class="verdict eq">Equivalent</span></td>
+        </tr>
+        <tr>
+          <td>Provenance of the enrolled key</td>
+          <td>App Attest attests its own key, never the identity key. The binding is transitive through the assertion, so the identity key's enclave residency is asserted by the app rather than proven by Apple.</td>
+          <td><span class="verdict part">Indirect</span></td>
+        </tr>
+        <tr>
+          <td>Challenge freshness</td>
+          <td>Server challenge goes in as <code>clientDataHash</code>; the derived nonce is sealed into the attestation leaf and reconstructed server-side.</td>
+          <td><span class="verdict eq">Equivalent</span></td>
+        </tr>
+        <tr>
+          <td>App binding — tag 709</td>
+          <td><code>rpIdHash</code> equals SHA-256 of <code>teamID.bundleID</code>. iOS 27 adds bundle version and a launch-environment category, which Android's tag does not carry.</td>
+          <td><span class="verdict eq">Equivalent</span></td>
+        </tr>
+        <tr>
+          <td>Verified boot, locked bootloader — tag 704</td>
+          <td>Not exposed to apps. Attestation fails on a tampered device, but there is no boot-state field to write policy against.</td>
+          <td><span class="verdict none">Absent</span></td>
+        </tr>
+        <tr>
+          <td>OS version, patch level — tags 705/706</td>
+          <td>Not carried in the attestation object.</td>
+          <td><span class="verdict none">Absent</span></td>
+        </tr>
+        <tr>
+          <td>Google revocation status list</td>
+          <td>The attestation receipt yields a 30-day fraud metric — how many attested keys that device has minted. A risk score to weigh, not a fail-closed verdict.</td>
+          <td><span class="verdict part">Partial</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="notes notes-2">
+    <div class="note gap">
+      <b>The two gaps are structural</b>
+      <span>Boot state and patch level simply are not in an App Attest object, and no server-side check recovers them. Policy that depends on either needs device management instead.</span>
+    </div>
+    <div class="note gap">
+      <b>Prototype the plumbing first</b>
+      <span>iOS ships no CSR API — the PKCS#10 DER is hand-assembled and signed with <code>SecKeyCreateSignature</code>. And <code>URLCredential(identity:)</code> needs a <code>SecIdentity</code>, which cannot be built directly: the issued certificate is added with <code>SecItemAdd</code> and the keychain pairs it to the enclave key by public-key hash. Apple confirms the workflow but documents nothing enclave-specific, and <code>errSecItemNotFound</code> here is the iOS counterpart of this PoC's keystore2 obstacle.</span>
+    </div>
+    <div class="note">
+      <b>The handshake is ordinary</b>
+      <span>A <code>URLSessionDelegate</code> challenge on <code>NSURLAuthenticationMethodClientCertificate</code> supplies the identity, with TLS 1.3 pinned through <code>tlsMinimumSupportedProtocolVersion</code>. Network.framework gives finer control where it is needed.</span>
+    </div>
+    <div class="note">
+      <b>The backend barely moves</b>
+      <span>Challenge issuance, identity derivation from the CSR key, CA signing, the device registry, and the request-time fingerprint and serial binding are all platform-agnostic and stay exactly as built. Only the attestation verifier gains a second implementation, chosen per platform at enrollment.</span>
+    </div>
+  </div>
+</section>
+
+</div>

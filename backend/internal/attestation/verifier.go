@@ -228,7 +228,7 @@ func (v *Verifier) VerifyAttestation(
 		}
 	}
 
-	// 8. Enforce attestation application ID binding (tag 710)
+	// 8. Enforce attestation application ID binding (tag 709)
 	if v.policy.ExpectedPackageName != "" {
 		if err := v.verifyApplicationID(&kd, v.policy.ExpectedPackageName); err != nil {
 			return nil, err
@@ -270,7 +270,7 @@ func (v *Verifier) VerifyAttestation(
 	return record, nil
 }
 
-// verifyApplicationID ensures the attestation application ID (tag 710) lists
+// verifyApplicationID ensures the attestation application ID (tag 709) lists
 // the expected package name, binding the attested key to this app only.
 func (v *Verifier) verifyApplicationID(kd *KeyDescription, expectedPackage string) error {
 	appIDRaw, found, err := findTagged(kd.TeeEnforced.FullBytes, TagAttestationApplicationId)
@@ -299,7 +299,7 @@ func (v *Verifier) verifyApplicationID(kd *KeyDescription, expectedPackage strin
 	return fmt.Errorf("attestation application ID does not include expected package %q", expectedPackage)
 }
 
-// attestationApplicationId models the DER structure embedded in tag 710:
+// attestationApplicationId models the DER structure embedded in tag 709:
 //
 //	AttestationApplicationId ::= SEQUENCE {
 //	    packageInfos SET OF AttestationPackageInfo,
@@ -313,7 +313,7 @@ type attestationPackageInfo struct {
 	Version     int
 }
 
-// parseAttestationApplicationId parses the OCTET STRING value of tag 710 whose
+// parseAttestationApplicationId parses the OCTET STRING value of tag 709 whose
 // content is the DER-encoded AttestationApplicationId structure.
 func parseAttestationApplicationId(raw []byte) ([]attestationPackageInfo, error) {
 	var octet asn1.RawValue

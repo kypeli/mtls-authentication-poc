@@ -64,7 +64,7 @@ func buildAuthorizationList(t *testing.T, cfg mockChainConfig) asn1.RawValue {
 		if err != nil {
 			t.Fatalf("failed to marshal attestation application id: %v", err)
 		}
-		// Tag 710 carries an OCTET STRING wrapping the DER structure.
+		// Tag 709 carries an OCTET STRING wrapping the DER structure.
 		octetDER, err := asn1.Marshal(asn1.RawValue{
 			Class:      asn1.ClassUniversal,
 			Tag:        asn1.TagOctetString,

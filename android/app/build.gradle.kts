@@ -2,7 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
-    id("dev.zacsweers.metro") version "1.4.2"
+    alias(libs.plugins.metro)
 }
 
 android {
